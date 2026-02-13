@@ -1,23 +1,29 @@
 # ⚡ Hedge — BTC Hedging Strategy
 
-3-process system for BTC position management during market corrections.
+3-process system for BTC position management across market cycles.
 
 ## Architecture
 
 ### P1 — Collateral Management (AAVE)
-Sell 0.1 BTC per 5% step down, cash → USDT collateral on AAVE.
+- **Price drops**: Sell 0.1 BTC per 5% step down → USDT added as collateral on AAVE
+- **Price rises**: Buy 0.1 BTC per 5% step up → rebuild BTC collateral on AAVE
+- Symmetrical: same 0.1 BTC size in both directions at each step crossing
 
 ### P2 — Accumulation via Borrowing (AAVE)
-Borrow USDT at each step, buy 0.1 BTC. Profit ~0.95 BTC per full cycle.
+- At each step down: borrow USDT equivalent, buy 0.1 BTC → accumulate
+- At ATH return: sell accumulated BTC, repay debt, keep profit (~0.95 BTC per full cycle)
+- First crossing of a step = 1 atomic tx (borrow only, no hedge needed)
 
 ### P3 — Execution Hedge (Deribit Perps Grid)
-Sliding window grid on BTC_USDC-PERPETUAL. Always 4 orders: 2 BUY + 2 SELL.
+- Sliding window grid on BTC_USDC-PERPETUAL — always 4 orders: 2 BUY + 2 SELL
+- Hedges price risk during on-chain swap execution delay (~hours)
+- Grid captures ~$100 per oscillation per step (+0.10-0.16 BTC/year)
 
 ## Components
 
 | Directory | Description |
 |-----------|-------------|
-| `dashboard/` | Real-time hedge dashboard (Express, port 3001) — AAVE positions, Deribit orders, BTC chart |
+| `dashboard/` | Real-time hedge dashboard (Express, port 3001) — AAVE positions, Deribit orders, BTC chart, close button |
 | `grid-ws/` | WebSocket monitor — real-time fill detection + automatic grid repositioning |
 | `simulators/` | Strategy simulators — v1 (options, deprecated) + v2 (perps grid) |
 
@@ -25,13 +31,14 @@ Sliding window grid on BTC_USDC-PERPETUAL. Always 4 orders: 2 BUY + 2 SELL.
 - **ATH**: 126,000 USD
 - **PAS**: 6,300 USD (5%)
 - **Steps**: 19
-- **Size**: 0.1 BTC/step
+- **Size**: 0.1 BTC/step (both directions)
 - **Instrument**: BTC_USDC-PERPETUAL
 
 ## Grid Logic (Sliding Window)
-- When BUY fills (price ↑): add BUY one step higher + SELL at crossed step, cancel furthest SELL
-- When SELL fills (price ↓): add SELL one step lower + BUY at crossed step, cancel furthest BUY
-- Always maintains 2 BUY + 2 SELL
+- Always maintains 2 BUY (above price) + 2 SELL (below price)
+- On fill, recalculate target window: 2 nearest buy_levels above + 2 nearest sell_levels below current price
+- BUY triggers (price ↑) → only adds a new BUY further up. Sells stay.
+- SELL triggers (price ↓) → only adds a new SELL further down. Buys stay.
 
 ## Deployment
 ```bash
