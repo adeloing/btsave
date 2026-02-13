@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Hedge Dashboard</title>
+<title>Quiet Storm</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
@@ -107,14 +107,19 @@ function render(d) {
   $('#app').innerHTML = `
     <div class="header">
       <div class="header-top">
-        <div>
-          <h1>⚡ <span>Hedge</span> Dashboard</h1>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg, var(--accent), var(--purple));display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 12px rgba(168,85,247,0.3)">🌀</div>
+          <div>
+            <h1 style="font-size:18px;line-height:1.1"><span>Quiet</span> Storm</h1>
+            <div style="font-size:10px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase">BTC Hedge System</div>
+          </div>
         </div>
         <div style="text-align:right">
           <div class="step-badge">Step ${d.currentStep}/19</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px">PAS/3 · $${d.PAS/3 | 0}</div>
         </div>
       </div>
-      <div style="display:flex;justify-content:center;align-items:baseline;gap:12px;margin:8px 0 4px">
+      <div style="display:flex;justify-content:center;align-items:baseline;gap:12px;margin:10px 0 6px">
         <div class="price-big">${fmtUSD(d.price)}</div>
         <div style="color:var(--red);font-size:15px;font-weight:700">${pctFromATH}%</div>
       </div>
@@ -297,7 +302,7 @@ function render(d) {
     
     <div class="footer">
       <span class="live-dot"></span> Mis à jour: ${new Date().toLocaleString('fr-FR')} — Auto-refresh 60s<br>
-      ⚡ Kei Hedge System — On-chain data via Ethereum RPC
+      🌀 Quiet Storm — On-chain data via Ethereum RPC
     </div>
   `;
   
