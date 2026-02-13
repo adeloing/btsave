@@ -296,26 +296,31 @@ app.post('/api/close-position', express.json(), async (req, res) => {
     const pos = (posRes.result || []).find(p => p.instrument_name === instrument && p.size !== 0);
     if (!pos) return res.status(404).json({ error: 'No open position found' });
 
-    // Close: sell if long, buy if short
-    const closeDir = pos.direction === 'buy' ? 'sell' : 'buy';
-    // size_currency is in BTC, size is in USD notional
-    const size = Math.abs(pos.size_currency || pos.size);
-    const result = await deribit(`private/${closeDir}`, {
+    // Use close_position API — closes entire position by instrument
+    const result = await deribit('private/close_position', {
       instrument_name: instrument,
-      amount: size,
-      type: 'market',
-      reduce_only: true,
-      label: 'manual_close'
+      type: 'market'
     }, token);
+
+    console.log('close_position result:', JSON.stringify(result));
+
+    if (result.error) {
+      return res.status(500).json({ error: result.error.message || JSON.stringify(result.error) });
+    }
 
     // Invalidate cache
     cache = { data: null, ts: 0 };
 
     const order = result.result?.order;
+    const trade = result.result?.trades?.[0];
     res.json({
       ok: true,
-      closed: { direction: pos.direction, size, pnl: pos.floating_profit_loss },
-      order: { state: order?.order_state, avgPrice: order?.average_price }
+      closed: {
+        direction: pos.direction,
+        size: order?.filled_amount || pos.size_currency || pos.size,
+        price: trade?.price || order?.average_price,
+        pnl: trade?.profit_loss ?? pos.floating_profit_loss
+      }
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
