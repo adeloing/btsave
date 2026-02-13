@@ -270,12 +270,12 @@ function render(d) {
       ${d.nextUp ? `<div class="action-row">
         <div><span class="action-dir up">▲ HAUSSE</span></div>
         <div class="action-price">${fmtUSD(d.nextUp.lo)}</div>
-        <div class="action-detail">Step ${d.nextUp.step - 1} — LONG perp</div>
+        <div class="action-detail">Step ${d.nextUp.step - 1}</div>
       </div>` : ''}
       ${d.nextDown ? `<div class="action-row">
         <div><span class="action-dir down">▼ BAISSE</span></div>
         <div class="action-price">${fmtUSD(d.nextDown.prix)}</div>
-        <div class="action-detail">Step ${d.nextDown.step} — Borrow + SHORT</div>
+        <div class="action-detail">Step ${d.nextDown.step}</div>
       </div>` : ''}
     </div>
     
