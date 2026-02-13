@@ -1,0 +1,18 @@
+[Unit]
+Description=Deribit Grid WebSocket Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xou
+WorkingDirectory=/home/xou/deribit-grid-ws
+ExecStart=/usr/bin/node /home/xou/deribit-grid-ws/grid-ws.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deribit-grid
+
+[Install]
+WantedBy=multi-user.target

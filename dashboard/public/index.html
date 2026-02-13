@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Hedge Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0e17; --card: #111827; --border: #1e293b;
+    --text: #e2e8f0; --muted: #64748b; --accent: #3b82f6;
+    --green: #22c55e; --red: #ef4444; --orange: #f59e0b;
+    --purple: #a855f7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+  .container { max-width: 480px; margin: 0 auto; padding: 12px; }
+  .header { background: linear-gradient(135deg, rgba(59,130,246,0.12) 0%, rgba(168,85,247,0.10) 50%, rgba(34,197,94,0.08) 100%); border: 1px solid rgba(59,130,246,0.2); border-radius: 16px; padding: 16px; margin-bottom: 12px; position: relative; overflow: hidden; }
+  .header::before { content: ''; position: absolute; top: -50%; right: -20%; width: 200px; height: 200px; background: radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%); pointer-events: none; }
+  .header-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .header h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
+  .header h1 span { background: linear-gradient(135deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .price-big { font-size: 32px; font-weight: 800; letter-spacing: -1.5px; margin: 4px 0; }
+  .price-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  .step-badge { background: linear-gradient(135deg, var(--accent), var(--purple)); color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 8px rgba(59,130,246,0.3); }
+  .header-stats { display: flex; gap: 12px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.06); }
+  .header-stat { flex: 1; text-align: center; }
+  .header-stat-value { font-size: 16px; font-weight: 700; }
+  .header-stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-top: 1px; }
+  .chart-wrap { background: var(--card); border-radius: 12px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--border); }
+  .chart-wrap canvas { width: 100% !important; height: 220px !important; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .card { background: var(--card); border-radius: 10px; padding: 12px; border: 1px solid var(--border); }
+  .card.full { grid-column: 1 / -1; }
+  .card-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+  .card-value { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
+  .card-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .orange { color: var(--orange); }
+  .purple { color: var(--purple); }
+  .section { background: var(--card); border-radius: 10px; padding: 12px; border: 1px solid var(--border); margin-bottom: 12px; }
+  .section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 8px; }
+  .action-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .action-row:last-child { border: none; }
+  .action-dir { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
+  .action-dir.up { background: rgba(34,197,94,0.15); color: var(--green); }
+  .action-dir.down { background: rgba(239,68,68,0.15); color: var(--red); }
+  .action-price { font-weight: 600; font-size: 15px; }
+  .action-detail { color: var(--muted); font-size: 11px; }
+  .order-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .order-row:last-child { border: none; }
+  .hf-bar { height: 6px; border-radius: 3px; background: var(--border); margin-top: 6px; overflow: hidden; }
+  .hf-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+  .footer { text-align: center; color: var(--muted); font-size: 10px; padding: 8px 0 20px; }
+  .loading { text-align: center; padding: 40px; color: var(--muted); }
+  .dot-pulse { display: inline-block; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+  .live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-right: 4px; animation: blink 2s infinite; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+<div class="container" id="app">
+  <div class="loading"><span class="dot-pulse">Chargement...</span></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = n => n.toLocaleString('fr-FR');
+const fmtUSD = n => '$' + fmt(Math.round(n));
+const fmtBTC = (n, d=4) => n.toFixed(d) + ' BTC';
+
+let chart = null;
+
+async function load() {
+  try {
+    const basePath = location.pathname.replace(/\/+$/, '');
+    const res = await fetch(basePath + '/api/data');
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    render(d);
+  } catch(e) {
+    $('#app').innerHTML = '<div class="loading" style="color:var(--red)">Erreur: ' + e.message + '</div>';
+  }
+}
+
+function render(d) {
+  const a = d.aave;
+  const pctFromATH = ((d.price - d.ATH) / d.ATH * 100).toFixed(1);
+  
+  // Health factor color & bar
+  let hfColor = 'green', hfWidth = 100;
+  if (a) {
+    if (a.healthFactor < 1.5) { hfColor = 'red'; hfWidth = 25; }
+    else if (a.healthFactor < 2.0) { hfColor = 'orange'; hfWidth = 50; }
+    else if (a.healthFactor < 3.0) { hfWidth = 70; }
+    else { hfWidth = 90; }
+  }
+
+  // LTV percentage
+  const ltvPct = a ? (a.totalDebtUSD / a.totalCollateralUSD * 100).toFixed(1) : '—';
+
+  $('#app').innerHTML = `
+    <div class="header">
+      <div class="header-top">
+        <div>
+          <h1>⚡ <span>Hedge</span> Dashboard</h1>
+        </div>
+        <div style="text-align:right">
+          <div class="step-badge">Step ${d.currentStep}/19</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;align-items:baseline;gap:12px;margin:8px 0 4px">
+        <div class="price-big">${fmtUSD(d.price)}</div>
+        <div style="color:var(--red);font-size:15px;font-weight:700">${pctFromATH}%</div>
+      </div>
+      <div class="header-stats">
+        <div class="header-stat">
+          <div class="header-stat-value">${d.currentStep}</div>
+          <div class="header-stat-label">Paliers franchis</div>
+        </div>
+        <div class="header-stat">
+          <div class="header-stat-value">${fmtUSD(d.ATH)}</div>
+          <div class="header-stat-label">ATH Réf.</div>
+        </div>
+        <div class="header-stat">
+          <div class="header-stat-value">${fmtUSD(d.PAS)}</div>
+          <div class="header-stat-label">Pas (5%)</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    
+    ${a ? `
+    <div class="section" style="padding:0;overflow:hidden">
+      <div style="background:var(--${hfColor});padding:8px 12px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;opacity:0.9">🏦 AAVE V3 — Health Factor</span>
+        <span style="font-size:20px;font-weight:800">${a.healthFactor.toFixed(2)}</span>
+      </div>
+      <div style="padding:12px">
+        <div style="display:flex;gap:12px">
+          <div style="flex:1;display:flex;flex-direction:column">
+            <div class="card-label" style="margin-bottom:8px;color:var(--green)">✦ ACTIF</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+              <span style="font-size:16px">₿</span>
+              <div>
+                <div style="font-weight:700;font-size:14px">${fmtBTC(a.wbtcBTC)}</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:16px">💵</span>
+              <div>
+                <div style="font-weight:700;font-size:14px">${fmtUSD(a.usdtCol)} <span class="card-sub">USDT</span></div>
+              </div>
+            </div>
+            <div style="flex:1"></div>
+            <div style="padding-top:6px;border-top:1px solid var(--border)">
+              <div class="card-sub">Total</div>
+              <div style="font-weight:700">${fmtUSD(a.totalCollateralUSD)}</div>
+            </div>
+          </div>
+          <div style="width:1px;background:var(--border)"></div>
+          <div style="flex:1;display:flex;flex-direction:column">
+            <div class="card-label" style="margin-bottom:8px;color:var(--red)">✦ PASSIF</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+              <span style="font-size:16px">💵</span>
+              <div>
+                <div style="font-weight:700;font-size:14px">${fmtUSD(a.debtUSDT)} <span class="card-sub">USDT</span></div>
+              </div>
+            </div>
+            ${a.totalDebtUSD - a.debtUSDT > 100 ? `
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:16px">💵</span>
+              <div>
+                <div style="font-weight:700;font-size:14px">${fmtUSD(a.totalDebtUSD - a.debtUSDT)} <span class="card-sub">USDC</span></div>
+              </div>
+            </div>` : ''}
+            <div style="flex:1"></div>
+            <div style="padding-top:6px;border-top:1px solid var(--border)">
+              <div class="card-sub">Total</div>
+              <div style="font-weight:700;color:var(--red)">${fmtUSD(a.totalDebtUSD)}</div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:11px;color:var(--muted)">
+          <span>LTV: ${ltvPct}%</span>
+          <span>Net: ${fmtUSD(a.totalCollateralUSD - a.totalDebtUSD)}</span>
+          <span>Dispo: ${fmtUSD(a.availableBorrowsUSD)}</span>
+        </div>
+      </div>
+    </div>
+    
+    ${a.athBreakdown ? `
+    <div class="section">
+      <h3>🎯 Total BTC @ ATH (${fmtUSD(d.ATH)})</h3>
+      <div class="grid" style="margin-bottom:0">
+        <div class="card full" style="border:1px solid rgba(34,197,94,0.3);text-align:center">
+          <div class="card-label">BTC ATH</div>
+          <div class="card-value green" style="font-size:22px">${fmtBTC(a.athBreakdown.totalBtc)}</div>
+          <div class="card-sub">${fmtUSD(a.athBreakdown.totalUSD)}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">P1 — Collatéral</div>
+          <div class="card-value">${fmtBTC(a.athBreakdown.p1Btc)}</div>
+          <div class="card-sub">après restitution ${a.athBreakdown.extraReturned} BTC</div>
+        </div>
+        <div class="card">
+          <div class="card-label">P2 — Accumulation</div>
+          <div class="card-value green">+${fmtBTC(a.athBreakdown.p2Net)}</div>
+          <div class="card-sub">${fmtBTC(a.athBreakdown.p2Btc)} achetés − ${fmtBTC(a.athBreakdown.debtRepayBtc)} remb.</div>
+        </div>
+      </div>
+    </div>
+    ` : ''}
+    <div class="card" style="margin-bottom:12px;text-align:center">
+      <div class="card-label">Liquidation à</div>
+      <div class="card-value orange">${fmtUSD(d.price / a.healthFactor * (a.liquidationThreshold / 10000))}</div>
+      <div class="card-sub">seuil: ${(a.liquidationThreshold / 100).toFixed(0)}%</div>
+    </div>
+    ` : `
+    <div class="section"><h3>🏦 AAVE</h3><div class="card-sub">Données indisponibles</div></div>
+    `}
+    
+    <div class="section">
+      <h3>📊 Deribit</h3>
+      <div class="grid" style="margin-bottom:0">
+        <div class="card">
+          <div class="card-label">Equity</div>
+          <div class="card-value">${d.deribit.equity.toFixed(2)}</div>
+          <div class="card-sub">USDC</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Disponible</div>
+          <div class="card-value">${d.deribit.available.toFixed(2)}</div>
+          <div class="card-sub">USDC</div>
+        </div>
+      </div>
+      ${d.deribit.orders.length ? `
+      <div style="margin-top:10px">
+        <div class="card-label" style="margin-bottom:6px">Ordres ouverts (${d.deribit.orders.length})</div>
+        ${d.deribit.orders.sort((a,b) => (b.trigger||b.price) - (a.trigger||a.price)).map(o => `
+          <div class="order-row">
+            <span class="action-dir ${o.direction === 'buy' ? 'up' : 'down'}">${o.direction.toUpperCase()}</span>
+            <span style="font-weight:600">${o.trigger ? '⚡'+fmt(o.trigger) : fmtUSD(o.price)}</span>
+            <span style="color:var(--muted)">${o.amount} BTC</span>
+            <span style="color:var(--muted);font-size:10px">${o.type}</span>
+          </div>
+        `).join('')}
+      </div>` : ''}
+      ${d.deribit.positions.length ? `
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+        <div class="card-label" style="margin-bottom:6px">Positions ouvertes</div>
+        ${d.deribit.positions.map(p => `
+          <div class="order-row">
+            <span class="action-dir ${p.direction === 'buy' ? 'up' : 'down'}">${p.direction.toUpperCase()}</span>
+            <span>${p.size} BTC</span>
+            <span class="${p.pnl >= 0 ? 'green' : 'red'}">${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)}</span>
+          </div>
+        `).join('')}
+      </div>` : ''}
+    </div>
+    
+    <div class="section">
+      <h3>🎯 Prochaines actions</h3>
+      ${d.nextUp ? `<div class="action-row">
+        <div><span class="action-dir up">▲ HAUSSE</span></div>
+        <div class="action-price">${fmtUSD(d.nextUp.lo)}</div>
+        <div class="action-detail">Step ${d.nextUp.step - 1} — LONG perp</div>
+      </div>` : ''}
+      ${d.nextDown ? `<div class="action-row">
+        <div><span class="action-dir down">▼ BAISSE</span></div>
+        <div class="action-price">${fmtUSD(d.nextDown.prix)}</div>
+        <div class="action-detail">Step ${d.nextDown.step} — Borrow + SHORT</div>
+      </div>` : ''}
+    </div>
+    
+    <div class="footer">
+      <span class="live-dot"></span> Mis à jour: ${new Date().toLocaleString('fr-FR')} — Auto-refresh 60s<br>
+      ⚡ Kei Hedge System — On-chain data via Ethereum RPC
+    </div>
+  `;
+  
+  drawChart(d);
+}
+
+function drawChart(d) {
+  const canvas = document.getElementById('chart');
+  if (!canvas || !d.priceHistory || !d.priceHistory.length) return;
+  
+  // OHLC candlestick data
+  const candles = d.priceHistory.map(p => ({
+    x: p.t,
+    o: p.o,
+    h: p.h,
+    l: p.l,
+    c: p.c
+  }));
+  
+  const annotations = {};
+  
+  // Next up trigger
+  if (d.nextUp) {
+    annotations.nextUp = {
+      type: 'line', yMin: d.nextUp.lo, yMax: d.nextUp.lo,
+      borderColor: 'rgba(34,197,94,0.6)', borderWidth: 2, borderDash: [6,3],
+      label: { display: true, content: '▲ ' + fmt(d.nextUp.lo), position: 'end', backgroundColor: 'rgba(34,197,94,0.15)', color: '#22c55e', font: { size: 10 } }
+    };
+  }
+  
+  // Next down trigger
+  if (d.nextDown) {
+    annotations.nextDown = {
+      type: 'line', yMin: d.nextDown.prix, yMax: d.nextDown.prix,
+      borderColor: 'rgba(239,68,68,0.6)', borderWidth: 2, borderDash: [6,3],
+      label: { display: true, content: '▼ ' + fmt(Math.round(d.nextDown.prix)), position: 'end', backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444', font: { size: 10 } }
+    };
+  }
+  
+  // Current price
+  annotations.current = {
+    type: 'line', yMin: d.price, yMax: d.price,
+    borderColor: 'rgba(59,130,246,0.8)', borderWidth: 1.5,
+    label: { display: true, content: fmt(Math.round(d.price)), position: 'start', backgroundColor: 'rgba(59,130,246,0.3)', color: '#93c5fd', font: { size: 10, weight: 'bold' } }
+  };
+  
+  if (chart) chart.destroy();
+  
+  // Use candlestick if available, fallback to line
+  const hasCandlestick = typeof Chart.controllers.candlestick !== 'undefined';
+  
+  if (hasCandlestick) {
+    chart = new Chart(canvas, {
+      type: 'candlestick',
+      data: {
+        datasets: [{
+          data: candles,
+          color: { up: '#22c55e', down: '#ef4444', unchanged: '#64748b' },
+          borderColor: { up: '#22c55e', down: '#ef4444', unchanged: '#64748b' },
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          annotation: { annotations }
+        },
+        scales: {
+          x: {
+            type: 'timeseries',
+            time: { unit: 'hour', displayFormats: { hour: 'dd/MM HH:mm' } },
+            ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 6, maxRotation: 0 },
+            grid: { display: false }
+          },
+          y: {
+            display: true,
+            ticks: { color: '#475569', font: { size: 9 }, callback: v => fmt(Math.round(v)), maxTicksLimit: 6 },
+            grid: { color: 'rgba(30,41,59,0.5)' }
+          }
+        }
+      }
+    });
+  } else {
+    // Fallback: draw candles manually on a line chart
+    const closes = candles.map(c => ({ x: c.x, y: c.c }));
+    chart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        datasets: [{
+          data: closes,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,0.08)',
+          borderWidth: 1.5,
+          fill: true,
+          pointRadius: 0,
+          tension: 0.1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          annotation: { annotations },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const c = candles[ctx.dataIndex];
+                if (c) return 'O:' + fmt(c.o) + ' H:' + fmt(c.h) + ' L:' + fmt(c.l) + ' C:' + fmt(c.c);
+                return fmt(ctx.parsed.y);
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            ticks: {
+              callback: v => { const dt = new Date(v); return dt.getDate() + '/' + (dt.getMonth()+1) + ' ' + dt.getHours() + 'h'; },
+              color: '#475569', font: { size: 9 }, maxTicksLimit: 6, maxRotation: 0
+            },
+            grid: { display: false }
+          },
+          y: {
+            display: true,
+            ticks: { color: '#475569', font: { size: 9 }, callback: v => fmt(Math.round(v)), maxTicksLimit: 6 },
+            grid: { color: 'rgba(30,41,59,0.5)' }
+          }
+        },
+        interaction: { intersect: false, mode: 'index' }
+      }
+    });
+
+    // Draw candles as overlay
+    const meta = chart.getDatasetMeta(0);
+    const yScale = chart.scales.y;
+    const xScale = chart.scales.x;
+    const ctx2 = canvas.getContext('2d');
+    
+    const candlePlugin = {
+      id: 'candlesticks',
+      afterDatasetDraw(ch) {
+        const ctx = ch.ctx;
+        const ys = ch.scales.y;
+        const xs = ch.scales.x;
+        const barW = Math.max(2, (xs.width / candles.length) * 0.6);
+        
+        candles.forEach(c => {
+          const x = xs.getPixelForValue(c.x);
+          const oY = ys.getPixelForValue(c.o);
+          const cY = ys.getPixelForValue(c.c);
+          const hY = ys.getPixelForValue(c.h);
+          const lY = ys.getPixelForValue(c.l);
+          const bull = c.c >= c.o;
+          const color = bull ? '#22c55e' : '#ef4444';
+          
+          // Wick
+          ctx.beginPath();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1;
+          ctx.moveTo(x, hY);
+          ctx.lineTo(x, lY);
+          ctx.stroke();
+          
+          // Body
+          const top = Math.min(oY, cY);
+          const h = Math.max(1, Math.abs(oY - cY));
+          ctx.fillStyle = bull ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)';
+          ctx.fillRect(x - barW/2, top, barW, h);
+        });
+      }
+    };
+    
+    chart.config.plugins = [candlePlugin];
+    chart.update();
+  }
+}
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
