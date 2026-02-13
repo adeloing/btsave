@@ -212,8 +212,15 @@ async function fetchAllData() {
     if (price < s.prix) currentStep = s.step;
   }
 
-  const nextDown = steps.find(s => s.step === currentStep + 1);
-  const nextUp = currentStep > 0 ? steps.find(s => s.step === currentStep) : null;
+  // Derive next actions from actual Deribit orders (not theoretical steps)
+  const buyOrders = orders.filter(o => o.direction === 'buy').sort((a, b) => (a.trigger || a.price) - (b.trigger || b.price));
+  const sellOrders = orders.filter(o => o.direction === 'sell').sort((a, b) => (b.trigger || b.price) - (a.trigger || a.price));
+  const nearestBuy = buyOrders[0]; // lowest buy trigger = nearest above
+  const nearestSell = sellOrders[0]; // highest sell trigger = nearest below
+
+  // Map back to step info for display
+  const nextUp = nearestBuy ? steps.find(s => s.lo === (nearestBuy.trigger || nearestBuy.price) || s.hi === (nearestBuy.trigger || nearestBuy.price)) || { step: '?', prix: nearestBuy.trigger || nearestBuy.price, lo: nearestBuy.trigger || nearestBuy.price } : null;
+  const nextDown = nearestSell ? steps.find(s => s.hi === (nearestSell.trigger || nearestSell.price) || s.lo === (nearestSell.trigger || nearestSell.price)) || { step: '?', prix: nearestSell.trigger || nearestSell.price, lo: nearestSell.trigger || nearestSell.price } : null;
 
   const wbtcBTC = aave ? aave.wbtcBTC : null;
   const debtUSDT = aave ? aave.debtUSDT : null;

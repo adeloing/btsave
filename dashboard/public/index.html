@@ -285,12 +285,12 @@ function render(d) {
       <h3>🎯 Prochaines actions</h3>
       ${d.nextUp ? `<div class="action-row">
         <div><span class="action-dir up">▲ HAUSSE</span></div>
-        <div class="action-price">${fmtUSD(d.nextUp.lo)}</div>
-        <div class="action-detail">Step ${d.nextUp.step - 1}</div>
+        <div class="action-price">${fmtUSD(d.nextUp.lo || d.nextUp.prix)}</div>
+        <div class="action-detail">Step ${d.nextUp.step <= 19 ? d.nextUp.step - 1 : d.nextUp.step}</div>
       </div>` : ''}
       ${d.nextDown ? `<div class="action-row">
         <div><span class="action-dir down">▼ BAISSE</span></div>
-        <div class="action-price">${fmtUSD(d.nextDown.prix)}</div>
+        <div class="action-price">${fmtUSD(d.nextDown.hi || d.nextDown.prix)}</div>
         <div class="action-detail">Step ${d.nextDown.step}</div>
       </div>` : ''}
     </div>
