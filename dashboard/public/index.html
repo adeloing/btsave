@@ -275,7 +275,7 @@ function render(d) {
             <span class="action-dir ${p.direction === 'buy' ? 'up' : 'down'}">${p.direction.toUpperCase()}</span>
             <span>${p.size} BTC</span>
             <span class="${p.pnl >= 0 ? 'green' : 'red'}">${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)}</span>
-            <button onclick="closePosition('${p.instrument}')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer">STOP</button>
+            <button id="close-${p.instrument.replace(/[^a-zA-Z0-9]/g,'')}" onclick="closePosition('${p.instrument}', this)" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:11px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">STOP</button>
           </div>
         `).join('')}
       </div>` : ''}
@@ -470,9 +470,8 @@ function drawChart(d) {
   }
 }
 
-async function closePosition(instrument) {
+async function closePosition(instrument, btn) {
   if (!confirm('Fermer la position ' + instrument + ' ?')) return;
-  const btn = event.target;
   btn.textContent = '...';
   btn.disabled = true;
   try {
@@ -486,14 +485,14 @@ async function closePosition(instrument) {
     if (d.ok) {
       btn.textContent = '✓';
       btn.style.background = 'var(--green)';
-      setTimeout(load, 1000);
+      setTimeout(load, 1500);
     } else {
       alert('Erreur: ' + (d.error || 'unknown'));
       btn.textContent = 'STOP';
       btn.disabled = false;
     }
   } catch (e) {
-    alert('Erreur: ' + e.message);
+    alert('Erreur réseau: ' + e.message);
     btn.textContent = 'STOP';
     btn.disabled = false;
   }
