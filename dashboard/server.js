@@ -201,10 +201,12 @@ async function fetchAllData() {
   // Strategy state
   const ATH = 126000;
   const PAS = 0.05 * ATH;
+  const halfSpread = PAS / 6; // PAS/3 spread, centered on prix
   const steps = Array.from({length: 19}, (_, i) => {
     const prix = ATH - (i+1) * PAS;
-    const lo = Math.floor(prix / 1000) * 1000;
-    return { step: i+1, prix: +prix.toFixed(0), lo, hi: lo + 1000 };
+    const lo = Math.round(prix - halfSpread);
+    const hi = Math.round(prix + halfSpread);
+    return { step: i+1, prix: +prix.toFixed(0), lo, hi };
   });
 
   let currentStep = 0;

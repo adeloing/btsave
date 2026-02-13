@@ -20,10 +20,12 @@ const RECONNECT_DELAY = 10000;
 const PING_INTERVAL = 25000;
 
 // === GRID MATH ===
+const HALF_SPREAD = PAS / 6; // PAS/3 spread centered on theoretical price
+
 function stepLevel(n) {
   const prix = ATH - n * PAS;
-  const buy = Math.floor(prix / 1000) * 1000;
-  return { buy, sell: buy + 1000 };
+  const buy = Math.round(prix - HALF_SPREAD);
+  return { buy, sell: Math.round(prix + HALF_SPREAD) };
 }
 
 // === GLOBALS ===
