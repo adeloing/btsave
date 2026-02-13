@@ -271,10 +271,11 @@ function render(d) {
       <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
         <div class="card-label" style="margin-bottom:6px">Positions ouvertes</div>
         ${d.deribit.positions.map(p => `
-          <div class="order-row">
+          <div class="order-row" style="align-items:center">
             <span class="action-dir ${p.direction === 'buy' ? 'up' : 'down'}">${p.direction.toUpperCase()}</span>
             <span>${p.size} BTC</span>
             <span class="${p.pnl >= 0 ? 'green' : 'red'}">${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)}</span>
+            <button onclick="closePosition('${p.instrument}')" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer">STOP</button>
           </div>
         `).join('')}
       </div>` : ''}
@@ -466,6 +467,35 @@ function drawChart(d) {
     
     chart.config.plugins = [candlePlugin];
     chart.update();
+  }
+}
+
+async function closePosition(instrument) {
+  if (!confirm('Fermer la position ' + instrument + ' ?')) return;
+  const btn = event.target;
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    const basePath = location.pathname.replace(/\/+$/, '');
+    const res = await fetch(basePath + '/api/close-position', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instrument })
+    });
+    const d = await res.json();
+    if (d.ok) {
+      btn.textContent = '✓';
+      btn.style.background = 'var(--green)';
+      setTimeout(load, 1000);
+    } else {
+      alert('Erreur: ' + (d.error || 'unknown'));
+      btn.textContent = 'STOP';
+      btn.disabled = false;
+    }
+  } catch (e) {
+    alert('Erreur: ' + e.message);
+    btn.textContent = 'STOP';
+    btn.disabled = false;
   }
 }
 

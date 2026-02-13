@@ -282,4 +282,43 @@ app.get('/api/data', async (req, res) => {
   }
 });
 
+// Close position endpoint
+app.post('/api/close-position', express.json(), async (req, res) => {
+  try {
+    const { instrument } = req.body;
+    if (!instrument) return res.status(400).json({ error: 'Missing instrument' });
+
+    const auth = await deribit('public/auth', { grant_type: 'client_credentials', client_id: DERIBIT_ID, client_secret: DERIBIT_SECRET });
+    const token = auth.result.access_token;
+
+    // Get current position to determine direction
+    const posRes = await deribit('private/get_positions', { currency: 'USDC' }, token);
+    const pos = (posRes.result || []).find(p => p.instrument_name === instrument && p.size !== 0);
+    if (!pos) return res.status(404).json({ error: 'No open position found' });
+
+    // Close: sell if long, buy if short
+    const closeDir = pos.direction === 'buy' ? 'sell' : 'buy';
+    const size = Math.abs(pos.size);
+    const result = await deribit(`private/${closeDir}`, {
+      instrument_name: instrument,
+      amount: size,
+      type: 'market',
+      reduce_only: true,
+      label: 'manual_close'
+    }, token);
+
+    // Invalidate cache
+    cache = { data: null, ts: 0 };
+
+    const order = result.result?.order;
+    res.json({
+      ok: true,
+      closed: { direction: pos.direction, size, pnl: pos.floating_profit_loss },
+      order: { state: order?.order_state, avgPrice: order?.average_price }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => console.log('Dashboard running on 0.0.0.0:' + PORT));
