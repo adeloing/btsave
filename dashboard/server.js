@@ -130,6 +130,38 @@ async function fetchPriceHistory() {
   });
 }
 
+// Fetch ETH balance + gas price
+async function fetchEthInfo() {
+  try {
+    const addr = AAVE_WALLET.toLowerCase();
+    const batch = [
+      { jsonrpc: '2.0', method: 'eth_getBalance', params: [addr, 'latest'], id: 0 },
+      { jsonrpc: '2.0', method: 'eth_gasPrice', params: [], id: 1 }
+    ];
+    const body = JSON.stringify(batch);
+    const url = new URL(ETH_RPC);
+    const mod = url.protocol === 'https:' ? https : http;
+    const results = await new Promise((resolve, reject) => {
+      const req = mod.request({ hostname: url.hostname, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, res => {
+        let d = ''; res.on('data', c => d += c);
+        res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+      });
+      req.on('error', reject);
+      req.write(body); req.end();
+    });
+    results.sort((a, b) => a.id - b.id);
+    const ethBalance = Number(toBig(results[0].result)) / 1e18;
+    const gasPriceWei = Number(toBig(results[1].result));
+    const gasPriceGwei = gasPriceWei / 1e9;
+    // Estimate swap tx cost: ~150k gas
+    const swapCostETH = (gasPriceWei * 150000) / 1e18;
+    return { ethBalance: +ethBalance.toFixed(6), gasPriceGwei: +gasPriceGwei.toFixed(1), swapCostETH: +swapCostETH.toFixed(6) };
+  } catch (e) {
+    console.error('ETH info error:', e.message);
+    return null;
+  }
+}
+
 process.on('uncaughtException', (err) => { console.error('UNCAUGHT:', err.message); });
 process.on('unhandledRejection', (err) => { console.error('UNHANDLED:', err.message || err); });
 
@@ -140,14 +172,15 @@ async function fetchAllData() {
   const auth = await deribit('public/auth', { grant_type: 'client_credentials', client_id: DERIBIT_ID, client_secret: DERIBIT_SECRET });
   const token = auth.result.access_token;
 
-  // Parallel: all Deribit calls + AAVE + history
-  const [ticker, account, ordersRes, posRes, aave, historyPrices] = await Promise.all([
+  // Parallel: all Deribit calls + AAVE + history + ETH info
+  const [ticker, account, ordersRes, posRes, aave, historyPrices, ethInfo] = await Promise.all([
     deribit('public/ticker', { instrument_name: 'BTC_USDC-PERPETUAL' }, token),
     deribit('private/get_account_summary', { currency: 'USDC' }, token),
     deribit('private/get_open_orders_by_currency', { currency: 'USDC' }, token),
     deribit('private/get_positions', { currency: 'USDC' }, token),
     fetchAAVE(),
     fetchPriceHistory(),
+    fetchEthInfo(),
   ]);
 
   const price = ticker.result.last_price;
@@ -228,6 +261,7 @@ async function fetchAllData() {
       athBreakdown
     } : null,
     deribit: { equity, available, orders, positions },
+    eth: ethInfo,
     priceHistory: historyPrices
   };
 }
