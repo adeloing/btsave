@@ -139,53 +139,42 @@ async function handleFill(filledOrder) {
     const currentPrice = ticker.last_price;
     log(`Current price: ${currentPrice}`);
 
-    if (direction === 'buy') {
-      // Price went UP past step N buy_level
-      // Add: BUY at step (N-1), SELL at step N's sell_level
-      // Cancel: furthest SELL (lowest trigger)
-      const newBuyStep = step - 1;
-      if (newBuyStep >= 1) {
-        const lvl = stepLevel(newBuyStep).buy;
-        const o = await placeOrder('buy', lvl, `grid_step${newBuyStep}_up`, currentPrice);
-        state.activeOrders.push({ label: `grid_step${newBuyStep}_up`, direction: 'buy', trigger: lvl, step: newBuyStep, order_id: o.order_id });
-      } else {
-        notify('⚠️ At step 1 — no buy above');
+    // Determine new center: find 2 nearest buy steps above price and 2 nearest sell steps below
+    // Build target orders based on current price
+    const buySteps = [];
+    const sellSteps = [];
+    for (let n = 1; n <= 19; n++) {
+      const lvl = stepLevel(n);
+      if (lvl.buy > currentPrice) buySteps.push({ step: n, price: lvl.buy, direction: 'buy', label: `grid_step${n}_up` });
+      if (lvl.sell < currentPrice) sellSteps.push({ step: n, price: lvl.sell, direction: 'sell', label: `grid_step${n}_down` });
+    }
+    // 2 nearest buys (lowest prices above current) and 2 nearest sells (highest prices below current)
+    buySteps.sort((a, b) => a.price - b.price);
+    sellSteps.sort((a, b) => b.price - a.price);
+    const targetBuys = buySteps.slice(0, 2);
+    const targetSells = sellSteps.slice(0, 2);
+    const targetOrders = [...targetBuys, ...targetSells];
+
+    log(`Target window: BUY ${targetBuys.map(o=>o.price).join('/')} | SELL ${targetSells.map(o=>o.price).join('/')}`);
+
+    // Find which target orders are missing (not in activeOrders)
+    for (const target of targetOrders) {
+      const exists = state.activeOrders.find(o => o.direction === target.direction && o.trigger === target.price);
+      if (!exists) {
+        const o = await placeOrder(target.direction, target.price, target.label, currentPrice);
+        state.activeOrders.push({ label: target.label, direction: target.direction, trigger: target.price, step: target.step, order_id: o.order_id });
       }
+    }
 
-      const sellLvl = stepLevel(step).sell;
-      const so = await placeOrder('sell', sellLvl, `grid_step${step}_down`, currentPrice);
-      state.activeOrders.push({ label: `grid_step${step}_down`, direction: 'sell', trigger: sellLvl, step, order_id: so.order_id });
-
-      // Cancel furthest sell
-      const sells = state.activeOrders.filter(o => o.direction === 'sell').sort((a, b) => a.trigger - b.trigger);
-      if (sells.length > 2) {
-        await cancelOrder(sells[0].order_id);
-        state.activeOrders = state.activeOrders.filter(o => o.order_id !== sells[0].order_id);
-      }
-
-    } else {
-      // Price went DOWN past step N sell_level
-      // Add: SELL at step (N+1), BUY at step N's buy_level
-      // Cancel: furthest BUY (highest trigger)
-      const newSellStep = step + 1;
-      if (newSellStep <= 19) {
-        const lvl = stepLevel(newSellStep).sell;
-        const o = await placeOrder('sell', lvl, `grid_step${newSellStep}_down`, currentPrice);
-        state.activeOrders.push({ label: `grid_step${newSellStep}_down`, direction: 'sell', trigger: lvl, step: newSellStep, order_id: o.order_id });
-      } else {
-        notify('⚠️ At step 19 — no sell below');
-      }
-
-      const buyLvl = stepLevel(step).buy;
-      const bo = await placeOrder('buy', buyLvl, `grid_step${step}_up`, currentPrice);
-      state.activeOrders.push({ label: `grid_step${step}_up`, direction: 'buy', trigger: buyLvl, step, order_id: bo.order_id });
-
-      // Cancel furthest buy
-      const buys = state.activeOrders.filter(o => o.direction === 'buy').sort((a, b) => b.trigger - a.trigger);
-      if (buys.length > 2) {
-        await cancelOrder(buys[0].order_id);
-        state.activeOrders = state.activeOrders.filter(o => o.order_id !== buys[0].order_id);
-      }
+    // Cancel orders that are NOT in the target window
+    const toCancel = state.activeOrders.filter(active => {
+      return !targetOrders.find(t => t.direction === active.direction && t.price === active.trigger);
+    });
+    for (const c of toCancel) {
+      try {
+        await cancelOrder(c.order_id);
+      } catch (e) { log(`Cancel failed for ${c.order_id}: ${e.message}`); }
+      state.activeOrders = state.activeOrders.filter(o => o.order_id !== c.order_id);
     }
 
     // Verify 2+2
