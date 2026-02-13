@@ -194,7 +194,7 @@ async function fetchAllData() {
   }));
 
   const positions = (posRes.result || []).filter(p => p.size !== 0).map(p => ({
-    instrument: p.instrument_name, size: p.size, direction: p.direction,
+    instrument: p.instrument_name, size: p.size_currency || p.size, direction: p.direction,
     avgPrice: p.average_price, pnl: p.floating_profit_loss, leverage: p.leverage
   }));
 
@@ -298,7 +298,8 @@ app.post('/api/close-position', express.json(), async (req, res) => {
 
     // Close: sell if long, buy if short
     const closeDir = pos.direction === 'buy' ? 'sell' : 'buy';
-    const size = Math.abs(pos.size);
+    // size_currency is in BTC, size is in USD notional
+    const size = Math.abs(pos.size_currency || pos.size);
     const result = await deribit(`private/${closeDir}`, {
       instrument_name: instrument,
       amount: size,
