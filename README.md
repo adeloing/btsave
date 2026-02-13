@@ -1,6 +1,6 @@
-# 🌀 Quiet Storm — BTC Hedging Strategy
+# BTSAVE — BTC Hedging Strategy
 
-![Quiet Storm](logo.jpg)
+![BTSAVE](logo.jpg)
 
 3-process system for BTC position management across market cycles.
 
@@ -79,4 +79,4 @@ sudo systemctl enable --now deribit-grid-ws
 - Dashboard: https://ratpoison2.duckdns.org/hedge/
 
 ---
-Built by xou & Kei 🌀
+Built by xou & Kei ⚡
