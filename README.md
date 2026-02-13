@@ -34,6 +34,28 @@
 - **Size**: 0.1 BTC/step (both directions)
 - **Instrument**: BTC_USDC-PERPETUAL
 
+## Grid Capture
+- **$100 net par crossing** (0.1 BTC × spread $1,000, net après équilibrage du sliding window)
+- Les gains sont conservés en BTC pour revente à l'ATH
+
+### Estimations de gains P3 — 9 scénarios
+
+| Durée | Volatilité | Cross/mois | Total | Gain $ | BTC accum. | Valeur @ATH |
+|-------|-----------|-----------|-------|--------|-----------|------------|
+| **3 mois** | Basse (30%) | 2.8 | 9 | $900 | 0.0125 ₿ | **$1,575** |
+| **3 mois** | Moyenne (55%) | 5.2 | 16 | $1,600 | 0.0222 ₿ | **$2,800** |
+| **3 mois** | Haute (85%) | 8.1 | 24 | $2,400 | 0.0333 ₿ | **$4,200** |
+| **10 mois** | Basse (30%) | 3.4 | 34 | $3,400 | 0.0400 ₿ | **$5,040** |
+| **10 mois** | Moyenne (55%) | 6.2 | 62 | $6,200 | 0.0729 ₿ | **$9,191** |
+| **10 mois** | Haute (85%) | 9.5 | 95 | $9,500 | 0.1118 ₿ | **$14,082** |
+| **18 mois** | Basse (30%) | 3.9 | 70 | $7,000 | 0.0714 ₿ | **$9,000** |
+| **18 mois** | Moyenne (55%) | 7.1 | 128 | $12,800 | 0.1306 ₿ | **$16,457** |
+| **18 mois** | Haute (85%) | 11.0 | 197 | $19,700 | 0.2010 ₿ | **$25,329** |
+
+> **Hypothèses** : capture $100 net/crossing · gains convertis en BTC au prix moyen de la période (3m→$72k, 10m→$85k, 18m→$98k) · revendus à ATH $126k · frais Deribit et funding rate négligés · crossings estimés via random walk ajusté (facteur 0.55)
+
+**Cas moyen réaliste** (10 mois, vol moyenne) : **~0.07 BTC → ~$9,200 @ATH** (×1.48 vs garder en $)
+
 ## Grid Logic (Sliding Window)
 - Always maintains 2 BUY (above price) + 2 SELL (below price)
 - On fill, recalculate target window: 2 nearest buy_levels above + 2 nearest sell_levels below current price

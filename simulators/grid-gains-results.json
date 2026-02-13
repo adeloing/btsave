@@ -1,0 +1,92 @@
+[
+  {
+    "duration": "Court (3 mois)",
+    "volatility": "Basse",
+    "crossingsPerMonth": "2.8",
+    "totalCrossings": 9,
+    "gainUSD": 900,
+    "btcAccum": "0.0125",
+    "valueATH": 1575,
+    "multiplier": "1.75"
+  },
+  {
+    "duration": "Court (3 mois)",
+    "volatility": "Moyenne",
+    "crossingsPerMonth": "5.2",
+    "totalCrossings": 16,
+    "gainUSD": 1600,
+    "btcAccum": "0.0222",
+    "valueATH": 2800,
+    "multiplier": "1.75"
+  },
+  {
+    "duration": "Court (3 mois)",
+    "volatility": "Haute",
+    "crossingsPerMonth": "8.1",
+    "totalCrossings": 24,
+    "gainUSD": 2400,
+    "btcAccum": "0.0333",
+    "valueATH": 4200,
+    "multiplier": "1.75"
+  },
+  {
+    "duration": "Moyen (10 mois)",
+    "volatility": "Basse",
+    "crossingsPerMonth": "3.4",
+    "totalCrossings": 34,
+    "gainUSD": 3400,
+    "btcAccum": "0.0400",
+    "valueATH": 5040,
+    "multiplier": "1.48"
+  },
+  {
+    "duration": "Moyen (10 mois)",
+    "volatility": "Moyenne",
+    "crossingsPerMonth": "6.2",
+    "totalCrossings": 62,
+    "gainUSD": 6200,
+    "btcAccum": "0.0729",
+    "valueATH": 9191,
+    "multiplier": "1.48"
+  },
+  {
+    "duration": "Moyen (10 mois)",
+    "volatility": "Haute",
+    "crossingsPerMonth": "9.5",
+    "totalCrossings": 95,
+    "gainUSD": 9500,
+    "btcAccum": "0.1118",
+    "valueATH": 14082,
+    "multiplier": "1.48"
+  },
+  {
+    "duration": "Long (18 mois)",
+    "volatility": "Basse",
+    "crossingsPerMonth": "3.9",
+    "totalCrossings": 70,
+    "gainUSD": 7000,
+    "btcAccum": "0.0714",
+    "valueATH": 9000,
+    "multiplier": "1.29"
+  },
+  {
+    "duration": "Long (18 mois)",
+    "volatility": "Moyenne",
+    "crossingsPerMonth": "7.1",
+    "totalCrossings": 128,
+    "gainUSD": 12800,
+    "btcAccum": "0.1306",
+    "valueATH": 16457,
+    "multiplier": "1.29"
+  },
+  {
+    "duration": "Long (18 mois)",
+    "volatility": "Haute",
+    "crossingsPerMonth": "11.0",
+    "totalCrossings": 197,
+    "gainUSD": 19700,
+    "btcAccum": "0.2010",
+    "valueATH": 25329,
+    "multiplier": "1.29"
+  }
+]
