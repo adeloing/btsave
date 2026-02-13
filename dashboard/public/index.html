@@ -470,8 +470,18 @@ function drawChart(d) {
   }
 }
 
+let closeConfirm = {};
 async function closePosition(instrument, btn) {
-  if (!confirm('Fermer la position ' + instrument + ' ?')) return;
+  // First tap: arm confirmation
+  if (!closeConfirm[instrument] || Date.now() - closeConfirm[instrument] > 3000) {
+    closeConfirm[instrument] = Date.now();
+    btn.textContent = 'CONFIRMER';
+    btn.style.background = '#b91c1c';
+    setTimeout(() => { if (btn.textContent === 'CONFIRMER') { btn.textContent = 'STOP'; btn.style.background = 'var(--red)'; } }, 3000);
+    return;
+  }
+  // Second tap: close
+  closeConfirm[instrument] = 0;
   btn.textContent = '...';
   btn.disabled = true;
   try {
@@ -487,14 +497,14 @@ async function closePosition(instrument, btn) {
       btn.style.background = 'var(--green)';
       setTimeout(load, 1500);
     } else {
-      alert('Erreur: ' + (d.error || 'unknown'));
-      btn.textContent = 'STOP';
-      btn.disabled = false;
+      btn.textContent = d.error || 'ERREUR';
+      btn.style.background = 'var(--orange)';
+      setTimeout(() => { btn.textContent = 'STOP'; btn.style.background = 'var(--red)'; btn.disabled = false; }, 3000);
     }
   } catch (e) {
-    alert('Erreur réseau: ' + e.message);
-    btn.textContent = 'STOP';
-    btn.disabled = false;
+    btn.textContent = 'ERREUR';
+    btn.style.background = 'var(--orange)';
+    setTimeout(() => { btn.textContent = 'STOP'; btn.style.background = 'var(--red)'; btn.disabled = false; }, 3000);
   }
 }
 
