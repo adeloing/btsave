@@ -87,14 +87,29 @@ function deribitRest(method, params) {
   });
 }
 
-async function placeStopLimit(direction, triggerPrice, label) {
-  log(`Place ${direction} stop_limit @ ${triggerPrice} [${label}]`);
-  const result = await deribitRest(`private/${direction}`, {
+async function placeOrder(direction, price, label, currentPrice) {
+  // For SELL above current price or BUY below current price: use limit
+  // For SELL below current price or BUY above current price: use stop_limit
+  const useLimit = (direction === 'sell' && price > currentPrice) || (direction === 'buy' && price < currentPrice);
+  const orderType = useLimit ? 'limit' : 'stop_limit';
+  
+  log(`Place ${direction} ${orderType} @ ${price} [${label}] (spot: ${currentPrice})`);
+  
+  const params = {
     instrument_name: INSTRUMENT, amount: ORDER_SIZE,
-    type: 'stop_limit', price: triggerPrice, trigger_price: triggerPrice,
-    trigger: 'last_price', time_in_force: 'good_til_cancelled', label
-  });
-  log(`Placed: ${result.order.order_id}`);
+    type: orderType, price: price,
+    time_in_force: 'good_til_cancelled', label
+  };
+  
+  if (orderType === 'stop_limit') {
+    params.trigger_price = price;
+    params.trigger = 'last_price';
+  } else {
+    params.post_only = true;
+  }
+  
+  const result = await deribitRest(`private/${direction}`, params);
+  log(`Placed: ${result.order.order_id} (${orderType})`);
   return result.order;
 }
 
@@ -119,6 +134,11 @@ async function handleFill(filledOrder) {
     if (!state.filledOrders) state.filledOrders = [];
     state.filledOrders.push({ ...filledOrder, filledAt: new Date().toISOString() });
 
+    // Get current price for order type selection
+    const ticker = await deribitRest('public/ticker', { instrument_name: INSTRUMENT });
+    const currentPrice = ticker.last_price;
+    log(`Current price: ${currentPrice}`);
+
     if (direction === 'buy') {
       // Price went UP past step N buy_level
       // Add: BUY at step (N-1), SELL at step N's sell_level
@@ -126,14 +146,14 @@ async function handleFill(filledOrder) {
       const newBuyStep = step - 1;
       if (newBuyStep >= 1) {
         const lvl = stepLevel(newBuyStep).buy;
-        const o = await placeStopLimit('buy', lvl, `grid_step${newBuyStep}_up`);
+        const o = await placeOrder('buy', lvl, `grid_step${newBuyStep}_up`, currentPrice);
         state.activeOrders.push({ label: `grid_step${newBuyStep}_up`, direction: 'buy', trigger: lvl, step: newBuyStep, order_id: o.order_id });
       } else {
         notify('⚠️ At step 1 — no buy above');
       }
 
       const sellLvl = stepLevel(step).sell;
-      const so = await placeStopLimit('sell', sellLvl, `grid_step${step}_down`);
+      const so = await placeOrder('sell', sellLvl, `grid_step${step}_down`, currentPrice);
       state.activeOrders.push({ label: `grid_step${step}_down`, direction: 'sell', trigger: sellLvl, step, order_id: so.order_id });
 
       // Cancel furthest sell
@@ -150,14 +170,14 @@ async function handleFill(filledOrder) {
       const newSellStep = step + 1;
       if (newSellStep <= 19) {
         const lvl = stepLevel(newSellStep).sell;
-        const o = await placeStopLimit('sell', lvl, `grid_step${newSellStep}_down`);
+        const o = await placeOrder('sell', lvl, `grid_step${newSellStep}_down`, currentPrice);
         state.activeOrders.push({ label: `grid_step${newSellStep}_down`, direction: 'sell', trigger: lvl, step: newSellStep, order_id: o.order_id });
       } else {
         notify('⚠️ At step 19 — no sell below');
       }
 
       const buyLvl = stepLevel(step).buy;
-      const bo = await placeStopLimit('buy', buyLvl, `grid_step${step}_up`);
+      const bo = await placeOrder('buy', buyLvl, `grid_step${step}_up`, currentPrice);
       state.activeOrders.push({ label: `grid_step${step}_up`, direction: 'buy', trigger: buyLvl, step, order_id: bo.order_id });
 
       // Cancel furthest buy
