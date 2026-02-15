@@ -220,7 +220,19 @@ async function fetchEthInfo() {
     const gasPriceGwei = gasPriceWei / 1e9;
     // Estimate swap tx cost: ~150k gas
     const swapCostETH = (gasPriceWei * 150000) / 1e18;
-    return { ethBalance: +ethBalance.toFixed(6), gasPriceGwei: +gasPriceGwei.toFixed(1), swapCostETH: +swapCostETH.toFixed(6) };
+    // Fetch ETH price from Deribit
+    let ethPriceUSD = 0;
+    try {
+      const ethTicker = await new Promise((resolve, reject) => {
+        https.get('https://www.deribit.com/api/v2/public/ticker?instrument_name=ETH-PERPETUAL', res => {
+          let d = ''; res.on('data', c => d += c);
+          res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+        }).on('error', reject);
+      });
+      ethPriceUSD = ethTicker.result?.last_price || 0;
+    } catch(e) {}
+    const swapCostUSD = swapCostETH * ethPriceUSD;
+    return { ethBalance: +ethBalance.toFixed(6), gasPriceGwei: +gasPriceGwei.toFixed(1), swapCostETH: +swapCostETH.toFixed(6), swapCostUSD: +swapCostUSD.toFixed(2), ethPriceUSD: +ethPriceUSD.toFixed(0) };
   } catch (e) {
     console.error('ETH info error:', e.message);
     return null;
