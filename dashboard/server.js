@@ -1,8 +1,54 @@
 const express = require('express');
 const https = require('https');
 const http = require('http');
+const crypto = require('crypto');
+const session = require('express-session');
 const app = express();
 const PORT = 3001;
+
+// === AUTH CONFIG ===
+const SESSION_SECRET = 'btsave-kei-' + crypto.randomBytes(8).toString('hex');
+// Password hashed with SHA-256
+const USERS = {
+  xou: { hash: crypto.createHash('sha256').update('682011sac').digest('hex'), role: 'admin' },
+  mael: { hash: crypto.createHash('sha256').update('mael').digest('hex'), role: 'readonly' }
+};
+
+app.use(session({
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: false, maxAge: 30 * 24 * 3600 * 1000 } // 30 days
+}));
+
+app.use(express.urlencoded({ extended: false }));
+
+// Auth routes
+app.post('/auth/login', (req, res) => {
+  const { username, password } = req.body;
+  const hash = crypto.createHash('sha256').update(password || '').digest('hex');
+  if (USERS[username] && USERS[username].hash === hash) {
+    req.session.user = username;
+    req.session.role = USERS[username].role;
+    const basePath = req.baseUrl || '';
+    res.redirect(basePath + '/');
+  } else {
+    res.redirect('login.html?error=1');
+  }
+});
+
+app.get('/auth/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('login.html'));
+});
+
+// Auth middleware
+function requireAuth(req, res, next) {
+  if (req.path === '/login.html' || req.path.startsWith('/auth/') || req.path === '/logo.svg') return next();
+  if (req.session?.user) return next();
+  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Not authenticated' });
+  res.redirect('login.html');
+}
+app.use(requireAuth);
 
 // Deribit API
 const DERIBIT_ID = 'hvWM-oCG';
@@ -20,13 +66,32 @@ const DEBT_USDT = '0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8';
 let cache = { data: null, ts: 0 };
 const CACHE_TTL = 15000; // 15s
 
+// Deribit token cache (expires_in is typically 900s)
+let deribitToken = { token: null, expiresAt: 0 };
+
+async function getDeribitToken() {
+  if (deribitToken.token && Date.now() < deribitToken.expiresAt - 30000) {
+    return deribitToken.token;
+  }
+  const auth = await deribit('public/auth', { grant_type: 'client_credentials', client_id: DERIBIT_ID, client_secret: DERIBIT_SECRET });
+  deribitToken.token = auth.result.access_token;
+  deribitToken.expiresAt = Date.now() + (auth.result.expires_in || 900) * 1000;
+  return deribitToken.token;
+}
+
 function deribit(method, params = {}, token) {
   return new Promise((resolve, reject) => {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = 'Bearer ' + token;
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
     const req = https.request({ hostname: 'www.deribit.com', path: '/api/v2/' + method, method: 'POST', headers }, res => {
-      let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+      let d = ''; res.on('data', c => d += c); res.on('end', () => {
+        try {
+          const parsed = JSON.parse(d);
+          if (parsed.error) reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
+          else resolve(parsed);
+        } catch(e) { reject(e); }
+      });
     });
     req.on('error', reject);
     req.write(body); req.end();
@@ -168,16 +233,15 @@ process.on('unhandledRejection', (err) => { console.error('UNHANDLED:', err.mess
 app.use(express.static('public'));
 
 async function fetchAllData() {
-  // Auth Deribit
-  const auth = await deribit('public/auth', { grant_type: 'client_credentials', client_id: DERIBIT_ID, client_secret: DERIBIT_SECRET });
-  const token = auth.result.access_token;
+  const token = await getDeribitToken();
 
   // Parallel: all Deribit calls + AAVE + history + ETH info
-  const [ticker, account, ordersRes, posRes, aave, historyPrices, ethInfo] = await Promise.all([
+  const [ticker, account, ordersRes, posRes, tradesRes, aave, historyPrices, ethInfo] = await Promise.all([
     deribit('public/ticker', { instrument_name: 'BTC_USDC-PERPETUAL' }, token),
     deribit('private/get_account_summary', { currency: 'USDC' }, token),
     deribit('private/get_open_orders_by_currency', { currency: 'USDC' }, token),
     deribit('private/get_positions', { currency: 'USDC' }, token),
+    deribit('private/get_user_trades_by_currency', { currency: 'USDC', kind: 'future', count: 100, sorting: 'desc' }, token).catch(() => ({ result: { trades: [] } })),
     fetchAAVE(),
     fetchPriceHistory(),
     fetchEthInfo(),
@@ -201,6 +265,7 @@ async function fetchAllData() {
   // Strategy state
   const ATH = 126000;
   const PAS = 0.05 * ATH;
+  const MAX_STEP_REACHED = 9; // highest step ever crossed (update when new steps fill)
   const halfSpread = PAS / 6; // PAS/3 spread, centered on prix
   const steps = Array.from({length: 19}, (_, i) => {
     const prix = ATH - (i+1) * PAS;
@@ -253,8 +318,26 @@ async function fetchAllData() {
     };
   }
 
+  // Grid gains from completed trades
+  const trades = (tradesRes.result && tradesRes.result.trades) || [];
+  const gridTrades = trades.filter(t => t.label && t.label.startsWith('grid_'));
+  let gridGains = { totalPnl: 0, tradeCount: gridTrades.length, trades: [] };
+  // Sum profit_loss from all grid trades
+  for (const t of gridTrades) {
+    gridGains.totalPnl += t.profit_loss || 0;
+    gridGains.trades.push({
+      direction: t.direction,
+      price: t.price,
+      amount: t.amount,
+      pnl: t.profit_loss || 0,
+      label: t.label,
+      timestamp: t.timestamp
+    });
+  }
+  gridGains.totalPnl = +gridGains.totalPnl.toFixed(2);
+
   return {
-    price, ATH, PAS, currentStep, steps,
+    price, ATH, PAS, currentStep, maxStepReached: MAX_STEP_REACHED, steps,
     nextDown: nextDown || null,
     nextUp: nextUp || null,
     aave: aave ? {
@@ -269,7 +352,7 @@ async function fetchAllData() {
       liquidationThreshold: aave.liquidationThreshold,
       athBreakdown
     } : null,
-    deribit: { equity, available, orders, positions },
+    deribit: { equity, available, orders, positions, gridGains },
     eth: ethInfo,
     priceHistory: historyPrices
   };
@@ -277,28 +360,29 @@ async function fetchAllData() {
 
 app.get('/api/data', async (req, res) => {
   try {
+    const role = req.session.role || 'readonly';
     // Serve from cache if fresh
     if (Date.now() - cache.ts < CACHE_TTL && cache.data) {
-      return res.json(cache.data);
+      return res.json({ ...cache.data, role });
     }
     const data = await fetchAllData();
     cache = { data, ts: Date.now() };
-    res.json(data);
+    res.json({ ...data, role });
   } catch (err) {
     // Serve stale cache on error
-    if (cache.data) return res.json(cache.data);
+    if (cache.data) return res.json({ ...cache.data, role: req.session.role || 'readonly' });
     res.status(500).json({ error: err.message });
   }
 });
 
-// Close position endpoint
+// Close position endpoint (admin only)
 app.post('/api/close-position', express.json(), async (req, res) => {
+  if (req.session.role !== 'admin') return res.status(403).json({ error: 'Accès refusé' });
   try {
     const { instrument } = req.body;
     if (!instrument) return res.status(400).json({ error: 'Missing instrument' });
 
-    const auth = await deribit('public/auth', { grant_type: 'client_credentials', client_id: DERIBIT_ID, client_secret: DERIBIT_SECRET });
-    const token = auth.result.access_token;
+    const token = await getDeribitToken();
 
     // Get current position to determine direction
     const posRes = await deribit('private/get_positions', { currency: 'USDC' }, token);

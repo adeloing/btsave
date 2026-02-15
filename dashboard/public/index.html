@@ -10,23 +10,23 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   :root {
-    --bg: #0a0e17; --card: #111827; --border: #1e293b;
-    --text: #e2e8f0; --muted: #64748b; --accent: #3b82f6;
-    --green: #22c55e; --red: #ef4444; --orange: #f59e0b;
-    --purple: #a855f7;
+    --bg: #121016; --card: #1a171f; --border: #2a2530;
+    --text: #e8e4ed; --muted: #7a7285; --accent: #f6b06b;
+    --green: #6ee7a0; --red: #f87171; --orange: #f6b06b;
+    --purple: #c4a6e8;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
   .container { max-width: 480px; margin: 0 auto; padding: 12px; }
-  .header { background: linear-gradient(135deg, rgba(59,130,246,0.12) 0%, rgba(168,85,247,0.10) 50%, rgba(34,197,94,0.08) 100%); border: 1px solid rgba(59,130,246,0.2); border-radius: 16px; padding: 16px; margin-bottom: 12px; position: relative; overflow: hidden; }
-  .header::before { content: ''; position: absolute; top: -50%; right: -20%; width: 200px; height: 200px; background: radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%); pointer-events: none; }
+  .header { background: linear-gradient(135deg, rgba(246,176,107,0.10) 0%, rgba(110,231,160,0.08) 50%, rgba(248,113,113,0.06) 100%); border: 1px solid rgba(246,176,107,0.15); border-radius: 16px; padding: 16px; margin-bottom: 12px; position: relative; overflow: hidden; }
+  .header::before { content: ''; position: absolute; top: -50%; right: -20%; width: 200px; height: 200px; background: radial-gradient(circle, rgba(246,176,107,0.06) 0%, transparent 70%); pointer-events: none; }
   .header-top { display: flex; justify-content: space-between; align-items: flex-start; }
   .header h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
-  .header h1 span { background: linear-gradient(135deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .header h1 span { background: linear-gradient(135deg, var(--orange), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
   .price-big { font-size: 32px; font-weight: 800; letter-spacing: -1.5px; margin: 4px 0; }
   .price-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
-  .step-badge { background: linear-gradient(135deg, var(--accent), var(--purple)); color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 8px rgba(59,130,246,0.3); }
-  .header-stats { display: flex; gap: 12px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.06); }
+  .step-badge { background: linear-gradient(135deg, var(--orange), var(--red)); color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 8px rgba(246,176,107,0.3); }
+  .header-stats { display: flex; gap: 12px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.05); }
   .header-stat { flex: 1; text-align: center; }
   .header-stat-value { font-size: 16px; font-weight: 700; }
   .header-stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-top: 1px; }
@@ -44,15 +44,18 @@
   .purple { color: var(--purple); }
   .section { background: var(--card); border-radius: 10px; padding: 12px; border: 1px solid var(--border); margin-bottom: 12px; }
   .section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 8px; }
-  .action-row { display: flex; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
-  .action-row:last-child { border: none; }
-  .action-dir { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; white-space: nowrap; width: 80px; text-align: center; flex-shrink: 0; }
-  .action-dir.up { background: rgba(34,197,94,0.15); color: var(--green); }
-  .action-dir.down { background: rgba(239,68,68,0.15); color: var(--red); }
-  .action-price { font-weight: 600; font-size: 15px; flex: 1; text-align: center; }
-  .action-detail { color: var(--muted); font-size: 11px; width: 50px; text-align: right; flex-shrink: 0; }
-  .order-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-  .order-row:last-child { border: none; }
+  .grid-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .grid-row:last-child { border: none; }
+  .action-dir { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; white-space: nowrap; text-align: center; display: inline-block; }
+  .action-dir.up { background: rgba(110,231,160,0.12); color: var(--green); }
+  .action-dir.down { background: rgba(248,113,113,0.12); color: var(--red); }
+  .grid-col1 { text-align: center; }
+  .grid-col2 { font-weight: 600; font-size: 12px; text-align: center; }
+  .grid-col3 { text-align: center; }
+  .grid-col4 { color: var(--muted); font-size: 11px; text-align: center; }
+  .action-mode { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+  .action-mode.auto { background: rgba(96,165,250,0.15); color: #60a5fa; }
+  .action-mode.manuel { background: rgba(246,176,107,0.15); color: #f6b06b; }
   .hf-bar { height: 6px; border-radius: 3px; background: var(--border); margin-top: 6px; overflow: hidden; }
   .hf-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
   .footer { text-align: center; color: var(--muted); font-size: 10px; padding: 8px 0 20px; }
@@ -88,6 +91,47 @@ async function load() {
   }
 }
 
+function buildNextActions(d) {
+  if (!d.steps || !d.steps.length) return '';
+  const orders = d.deribit ? d.deribit.orders : [];
+  const maxReached = d.maxStepReached || d.currentStep;
+  
+  const rows = [];
+  
+  // HAUSSE: 2 nearest steps with BUY orders → always AUTO, show trigger (lo)
+  const upSteps = d.steps
+    .filter(s => s.step <= d.currentStep && orders.some(o => {
+      const op = o.trigger || o.price;
+      return o.direction === 'buy' && (op === s.lo || op === s.hi || op === s.prix);
+    }))
+    .sort((a, b) => a.step - b.step)
+    .slice(-2);
+  for (const s of upSteps) {
+    rows.push(`<div class="grid-row">
+      <span class="grid-col1"><span class="action-dir up">▲ HAUSSE</span></span>
+      <span class="grid-col2">${fmtUSD(s.lo)}</span>
+      <span class="grid-col3"><span class="action-mode auto">AUTO</span></span>
+      <span class="grid-col4">Step ${s.step - 1}</span>
+    </div>`);
+  }
+  
+  // BAISSE: 2 next steps never crossed (step > maxReached) → always MANUEL, show prix théorique
+  const downSteps = d.steps
+    .filter(s => s.step > maxReached)
+    .sort((a, b) => a.step - b.step)
+    .slice(0, 2);
+  for (const s of downSteps) {
+    rows.push(`<div class="grid-row">
+      <span class="grid-col1"><span class="action-dir down">▼ BAISSE</span></span>
+      <span class="grid-col2">${fmtUSD(s.prix)}</span>
+      <span class="grid-col3"><span class="action-mode manuel">MANUEL</span></span>
+      <span class="grid-col4">Step ${s.step}</span>
+    </div>`);
+  }
+  
+  return rows.join('');
+}
+
 function render(d) {
   const a = d.aave;
   const pctFromATH = ((d.price - d.ATH) / d.ATH * 100).toFixed(1);
@@ -108,7 +152,7 @@ function render(d) {
     <div class="header">
       <div class="header-top">
         <div>
-          <img src="logo.png" alt="BTSAVE" style="height:30px;filter:invert(0.85) brightness(1.5)">
+          <img src="logo.svg" alt="BTSAVE" style="height:30px">
         </div>
         <div style="text-align:right">
           <div class="step-badge">Step ${d.currentStep}/19</div>
@@ -154,7 +198,7 @@ function render(d) {
     
     ${a ? `
     <div class="section" style="padding:0;overflow:hidden">
-      <div style="background:var(--${hfColor});padding:8px 12px;display:flex;justify-content:space-between;align-items:center">
+      <div style="background:${hfColor === 'green' ? 'rgba(110,231,160,0.18)' : hfColor === 'orange' ? 'rgba(246,176,107,0.25)' : 'rgba(248,113,113,0.25)'};padding:8px 12px;display:flex;justify-content:space-between;align-items:center">
         <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;opacity:0.9">🏦 AAVE V3 — Health Factor</span>
         <span style="font-size:20px;font-weight:800">${a.healthFactor.toFixed(2)}</span>
       </div>
@@ -206,7 +250,7 @@ function render(d) {
         <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:11px;color:var(--muted)">
           <span>LTV: ${ltvPct}%</span>
           <span>Net: ${fmtUSD(a.totalCollateralUSD - a.totalDebtUSD)}</span>
-          <span>Dispo: ${fmtUSD(a.availableBorrowsUSD)}</span>
+          <span class="orange">Liq: ${fmtUSD(d.price / a.healthFactor * (a.liquidationThreshold / 10000))}</span>
         </div>
       </div>
     </div>
@@ -215,7 +259,7 @@ function render(d) {
     <div class="section">
       <h3>🎯 Total BTC @ ATH (${fmtUSD(d.ATH)})</h3>
       <div class="grid" style="margin-bottom:0">
-        <div class="card full" style="border:1px solid rgba(34,197,94,0.3);text-align:center">
+        <div class="card full" style="border:1px solid rgba(110,231,160,0.25);text-align:center">
           <div class="card-label">BTC ATH</div>
           <div class="card-value green" style="font-size:22px">${fmtBTC(a.athBreakdown.totalBtc)}</div>
           <div class="card-sub">${fmtUSD(a.athBreakdown.totalUSD)}</div>
@@ -233,10 +277,12 @@ function render(d) {
       </div>
     </div>
     ` : ''}
-    <div class="card" style="margin-bottom:12px;text-align:center">
-      <div class="card-label">Liquidation à</div>
-      <div class="card-value orange">${fmtUSD(d.price / a.healthFactor * (a.liquidationThreshold / 10000))}</div>
-      <div class="card-sub">seuil: ${(a.liquidationThreshold / 100).toFixed(0)}%</div>
+    <div class="section">
+      <h3>📈 Grid Gains</h3>
+      <div style="text-align:center">
+        <div class="card-value ${d.deribit.gridGains.totalPnl >= 0 ? 'green' : 'red'}" style="font-size:22px">${d.deribit.gridGains.totalPnl >= 0 ? '+' : ''}${d.deribit.gridGains.totalPnl.toFixed(2)} USDC</div>
+        <div class="card-sub">${d.deribit.gridGains.tradeCount} trades exécutés</div>
+      </div>
     </div>
     ` : `
     <div class="section"><h3>🏦 AAVE</h3><div class="card-sub">Données indisponibles</div></div>
@@ -245,12 +291,12 @@ function render(d) {
     <div class="section">
       <h3>📊 Deribit</h3>
       <div class="grid" style="margin-bottom:0">
-        <div class="card">
+        <div class="card" style="text-align:center">
           <div class="card-label">Equity</div>
           <div class="card-value">${d.deribit.equity.toFixed(2)}</div>
           <div class="card-sub">USDC</div>
         </div>
-        <div class="card">
+        <div class="card" style="text-align:center">
           <div class="card-label">Disponible</div>
           <div class="card-value">${d.deribit.available.toFixed(2)}</div>
           <div class="card-sub">USDC</div>
@@ -260,11 +306,11 @@ function render(d) {
       <div style="margin-top:10px">
         <div class="card-label" style="margin-bottom:6px">Ordres ouverts (${d.deribit.orders.length})</div>
         ${d.deribit.orders.sort((a,b) => (b.trigger||b.price) - (a.trigger||a.price)).map(o => `
-          <div class="order-row">
-            <span class="action-dir ${o.direction === 'buy' ? 'up' : 'down'}">${o.direction.toUpperCase()}</span>
-            <span style="font-weight:600">${o.trigger ? '⚡'+fmt(o.trigger) : fmtUSD(o.price)}</span>
-            <span style="color:var(--muted)">${o.amount} BTC</span>
-            <span style="color:var(--muted);font-size:10px">${o.type}</span>
+          <div class="grid-row">
+            <span class="grid-col1"><span class="action-dir ${o.direction === 'buy' ? 'up' : 'down'}">${o.direction.toUpperCase()}</span></span>
+            <span class="grid-col2">${o.trigger ? '⚡'+fmt(o.trigger) : fmtUSD(o.price)}</span>
+            <span class="grid-col3" style="color:var(--muted)">${o.amount} BTC</span>
+            <span class="grid-col4">${o.type}</span>
           </div>
         `).join('')}
       </div>` : ''}
@@ -272,11 +318,11 @@ function render(d) {
       <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
         <div class="card-label" style="margin-bottom:6px">Positions ouvertes</div>
         ${d.deribit.positions.map(p => `
-          <div class="order-row" style="align-items:center">
-            <span class="action-dir ${p.direction === 'buy' ? 'up' : 'down'}">${p.direction.toUpperCase()}</span>
-            <span>${p.size} BTC</span>
-            <span class="${p.pnl >= 0 ? 'green' : 'red'}">${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)}</span>
-            <button id="close-${p.instrument.replace(/[^a-zA-Z0-9]/g,'')}" onclick="closePosition('${p.instrument}', this)" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:11px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">STOP</button>
+          <div class="grid-row">
+            <span class="grid-col1"><span class="action-dir ${p.direction === 'buy' ? 'up' : 'down'}">${p.direction.toUpperCase()}</span></span>
+            <span class="grid-col2">${p.size} BTC</span>
+            <span class="grid-col3 ${p.pnl >= 0 ? 'green' : 'red'}">${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)}</span>
+            ${d.role === 'admin' ? `<button id="close-${p.instrument.replace(/[^a-zA-Z0-9]/g,'')}" onclick="closePosition('${p.instrument}', this)" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:11px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent">STOP</button>` : `<span class="grid-col4"></span>`}
           </div>
         `).join('')}
       </div>` : ''}
@@ -284,16 +330,7 @@ function render(d) {
     
     <div class="section">
       <h3>🎯 Prochaines actions</h3>
-      ${d.nextUp ? `<div class="action-row">
-        <div><span class="action-dir up">▲ HAUSSE</span></div>
-        <div class="action-price">${fmtUSD(d.nextUp.lo || d.nextUp.prix)}</div>
-        <div class="action-detail">Step ${d.nextUp.step <= 19 ? d.nextUp.step - 1 : d.nextUp.step}</div>
-      </div>` : ''}
-      ${d.nextDown ? `<div class="action-row">
-        <div><span class="action-dir down">▼ BAISSE</span></div>
-        <div class="action-price">${fmtUSD(d.nextDown.hi || d.nextDown.prix)}</div>
-        <div class="action-detail">Step ${d.nextDown.step}</div>
-      </div>` : ''}
+      ${buildNextActions(d)}
     </div>
     
     <div class="footer">
@@ -319,32 +356,49 @@ function drawChart(d) {
   }));
   
   const annotations = {};
+  const orders = d.deribit ? d.deribit.orders : [];
+  const maxReached = d.maxStepReached || d.currentStep;
   
-  // Next up trigger
-  if (d.nextUp) {
+  // Next up: nearest step with a BUY order (lowest lo above or near price)
+  const upStep = d.steps
+    .filter(s => s.step <= d.currentStep && orders.some(o => o.direction === 'buy' && ((o.trigger || o.price) === s.lo || (o.trigger || o.price) === s.hi)))
+    .sort((a, b) => a.lo - b.lo)[0];
+  if (upStep) {
     annotations.nextUp = {
-      type: 'line', yMin: d.nextUp.lo, yMax: d.nextUp.lo,
-      borderColor: 'rgba(34,197,94,0.6)', borderWidth: 2, borderDash: [6,3],
-      label: { display: true, content: '▲ ' + fmt(d.nextUp.lo), position: 'end', backgroundColor: 'rgba(34,197,94,0.15)', color: '#22c55e', font: { size: 10 } }
+      type: 'line', yMin: upStep.lo, yMax: upStep.lo,
+      borderColor: 'rgba(110,231,160,0.6)', borderWidth: 2, borderDash: [6,3],
+      label: { display: true, content: '▲ ' + fmt(upStep.lo), position: 'end', backgroundColor: 'rgba(110,231,160,0.15)', color: '#6ee7a0', font: { size: 10 } }
     };
   }
   
-  // Next down trigger
-  if (d.nextDown) {
+  // Next down: nearest first-crossing step (prix théorique)
+  const downStep = d.steps
+    .filter(s => s.step > maxReached)
+    .sort((a, b) => a.step - b.step)[0];
+  if (downStep) {
     annotations.nextDown = {
-      type: 'line', yMin: d.nextDown.prix, yMax: d.nextDown.prix,
-      borderColor: 'rgba(239,68,68,0.6)', borderWidth: 2, borderDash: [6,3],
-      label: { display: true, content: '▼ ' + fmt(Math.round(d.nextDown.prix)), position: 'end', backgroundColor: 'rgba(239,68,68,0.15)', color: '#ef4444', font: { size: 10 } }
+      type: 'line', yMin: downStep.prix, yMax: downStep.prix,
+      borderColor: 'rgba(248,113,113,0.6)', borderWidth: 2, borderDash: [6,3],
+      label: { display: true, content: '▼ ' + fmt(downStep.prix), position: 'end', backgroundColor: 'rgba(248,113,113,0.15)', color: '#f87171', font: { size: 10 } }
     };
   }
   
   // Current price
   annotations.current = {
     type: 'line', yMin: d.price, yMax: d.price,
-    borderColor: 'rgba(59,130,246,0.8)', borderWidth: 1.5,
-    label: { display: true, content: fmt(Math.round(d.price)), position: 'start', backgroundColor: 'rgba(59,130,246,0.3)', color: '#93c5fd', font: { size: 10, weight: 'bold' } }
+    borderColor: 'rgba(246,176,107,0.8)', borderWidth: 1.5,
+    label: { display: true, content: fmt(Math.round(d.price)), position: 'start', backgroundColor: 'rgba(246,176,107,0.3)', color: '#f6b06b', font: { size: 10, weight: 'bold' } }
   };
   
+  // Ensure Y axis always includes annotation levels
+  const yValues = candles.flatMap(c => [c.h, c.l]);
+  if (upStep) yValues.push(upStep.lo);
+  if (downStep) yValues.push(downStep.prix);
+  const suggestedMin = Math.min(...yValues);
+  const suggestedMax = Math.max(...yValues);
+  const chartMin = suggestedMin;
+  const chartMax = suggestedMax;
+
   if (chart) chart.destroy();
   
   // Use candlestick if available, fallback to line
@@ -356,8 +410,8 @@ function drawChart(d) {
       data: {
         datasets: [{
           data: candles,
-          color: { up: '#22c55e', down: '#ef4444', unchanged: '#64748b' },
-          borderColor: { up: '#22c55e', down: '#ef4444', unchanged: '#64748b' },
+          color: { up: '#6ee7a0', down: '#f87171', unchanged: '#7a7285' },
+          borderColor: { up: '#6ee7a0', down: '#f87171', unchanged: '#7a7285' },
         }]
       },
       options: {
@@ -372,13 +426,14 @@ function drawChart(d) {
           x: {
             type: 'timeseries',
             time: { unit: 'hour', displayFormats: { hour: 'dd/MM HH:mm' } },
-            ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 6, maxRotation: 0 },
+            ticks: { color: '#7a7285', font: { size: 9 }, maxTicksLimit: 6, maxRotation: 0 },
             grid: { display: false }
           },
           y: {
             display: true,
-            ticks: { color: '#475569', font: { size: 9 }, callback: v => fmt(Math.round(v)), maxTicksLimit: 6 },
-            grid: { color: 'rgba(30,41,59,0.5)' }
+            min: chartMin, max: chartMax,
+            ticks: { color: '#7a7285', font: { size: 9 }, callback: v => fmt(Math.round(v)), maxTicksLimit: 6 },
+            grid: { color: 'rgba(42,37,48,0.5)' }
           }
         }
       }
@@ -391,8 +446,8 @@ function drawChart(d) {
       data: {
         datasets: [{
           data: closes,
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59,130,246,0.08)',
+          borderColor: '#f6b06b',
+          backgroundColor: 'rgba(246,176,107,0.08)',
           borderWidth: 1.5,
           fill: true,
           pointRadius: 0,
@@ -412,14 +467,15 @@ function drawChart(d) {
             type: 'linear',
             ticks: {
               callback: v => { const dt = new Date(v); return dt.getDate() + '/' + (dt.getMonth()+1) + ' ' + dt.getHours() + 'h'; },
-              color: '#475569', font: { size: 9 }, maxTicksLimit: 6, maxRotation: 0
+              color: '#7a7285', font: { size: 9 }, maxTicksLimit: 6, maxRotation: 0
             },
             grid: { display: false }
           },
           y: {
             display: true,
-            ticks: { color: '#475569', font: { size: 9 }, callback: v => fmt(Math.round(v)), maxTicksLimit: 6 },
-            grid: { color: 'rgba(30,41,59,0.5)' }
+            min: chartMin, max: chartMax,
+            ticks: { color: '#7a7285', font: { size: 9 }, callback: v => fmt(Math.round(v)), maxTicksLimit: 6 },
+            grid: { color: 'rgba(42,37,48,0.5)' }
           }
         },
         interaction: { intersect: false, mode: 'index' }
@@ -447,7 +503,7 @@ function drawChart(d) {
           const hY = ys.getPixelForValue(c.h);
           const lY = ys.getPixelForValue(c.l);
           const bull = c.c >= c.o;
-          const color = bull ? '#22c55e' : '#ef4444';
+          const color = bull ? '#6ee7a0' : '#f87171';
           
           // Wick
           ctx.beginPath();
@@ -460,7 +516,7 @@ function drawChart(d) {
           // Body
           const top = Math.min(oY, cY);
           const h = Math.max(1, Math.abs(oY - cY));
-          ctx.fillStyle = bull ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.8)';
+          ctx.fillStyle = bull ? 'rgba(110,231,160,0.8)' : 'rgba(248,113,113,0.8)';
           ctx.fillRect(x - barW/2, top, barW, h);
         });
       }
@@ -477,7 +533,7 @@ async function closePosition(instrument, btn) {
   if (!closeConfirm[instrument] || Date.now() - closeConfirm[instrument] > 3000) {
     closeConfirm[instrument] = Date.now();
     btn.textContent = 'CONFIRMER';
-    btn.style.background = '#b91c1c';
+    btn.style.background = '#dc4444';
     setTimeout(() => { if (btn.textContent === 'CONFIRMER') { btn.textContent = 'STOP'; btn.style.background = 'var(--red)'; } }, 3000);
     return;
   }
