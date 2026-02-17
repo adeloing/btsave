@@ -58,6 +58,7 @@ const AAVE_POOL = '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2';
 const AWBTC = '0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8';
 const AUSDT = '0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a';
 const DEBT_USDT = '0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8';
+const AUSDC = '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c';
 
 // === Strategy constants ===
 const ATH = 126000;
@@ -145,6 +146,7 @@ async function fetchAAVE() {
       { to: AWBTC, data: balOf },
       { to: AUSDT, data: balOf },
       { to: DEBT_USDT, data: balOf },
+      { to: AUSDC, data: balOf },
     ]);
 
     results.sort((a, b) => a.id - b.id);
@@ -163,6 +165,7 @@ async function fetchAAVE() {
       wbtcBTC: Number(toBig(results[1].result)) / 1e8,
       usdtCol: Number(toBig(results[2].result)) / 1e6,
       debtUSDT: Number(toBig(results[3].result)) / 1e6,
+      usdcCol: Number(toBig(results[4].result)) / 1e6,
     };
   } catch (e) {
     console.error('AAVE fetch error:', e.message);
@@ -310,7 +313,7 @@ async function fetchAllData() {
   let repartition = null;
   if (aave) {
     const wbtcUSD = aave.wbtcBTC * price;
-    const usdcAAVE = aave.usdtCol; // USDT used as USDC buffer on AAVE
+    const usdcAAVE = aave.usdtCol + aave.usdcCol; // USDT + USDC collateral on AAVE
     const usdcDeribit = equity; // Deribit equity in USDC
     const totalPortfolio = wbtcUSD + usdcAAVE + usdcDeribit;
     repartition = {
@@ -375,6 +378,7 @@ async function fetchAllData() {
     aave: aave ? {
       wbtcBTC: +aave.wbtcBTC.toFixed(8),
       usdtCol: +aave.usdtCol.toFixed(2),
+      usdcCol: +aave.usdcCol.toFixed(2),
       debtUSDT: +aave.debtUSDT.toFixed(2),
       totalCollateralUSD: +aave.totalCollateralUSD.toFixed(2),
       totalDebtUSD: +aave.totalDebtUSD.toFixed(2),
