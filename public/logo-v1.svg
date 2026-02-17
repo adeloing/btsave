@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 393 110" height="110">
+  <!-- v1: Subtil — sizes [100,97,94,91,88,85], gaps [8,10,12,14,16] -->
+  <!-- ₿ 100px -->
+  <text x="0" y="100" fill="#f6b06b" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="100">₿</text>
+  <!-- T 97px + orbit -->
+  <text x="68" y="100" fill="#6ee7a0" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="97">T</text>
+  <ellipse cx="97" cy="61.199999999999996" rx="27.84" ry="8.245000000000001" fill="none" stroke="#6ee7a0" stroke-width="4"/>
+  <!-- $ 94px -->
+  <text x="136" y="100" fill="#6ee7a0" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="94">$</text>
+  <!-- ∧ 91px -->
+  <path d="M204,100 L231.5,34.480000000000004 L259,100" fill="none" stroke="#6ee7a0" stroke-width="13" stroke-linejoin="miter" stroke-linecap="square"/>
+  <!-- V 88px -->
+  <text x="273" y="100" fill="#f87171" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="88">V</text>
+  <!-- € 85px -->
+  <text x="342" y="100" fill="#f87171" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="85">€</text>
+</svg>
