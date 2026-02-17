@@ -381,10 +381,14 @@ function render(d) {
     <!-- Prochaines Actions -->
     ${d.nextActions ? `
     <div class="section" style="border-color:rgba(246,176,107,0.3);background:linear-gradient(135deg,rgba(246,176,107,0.06),var(--card))">
-      <h3>🎯 Prochaines actions <span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0">(${d.nextActions.pctFromATH}% ATH — ${d.nextActions.zone})</span></h3>
+      <h3>🎯 Prochaines actions <span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0">(${d.nextActions.pctFromATH}% ATH)</span></h3>
       ${d.nextActions.warnings.length ? d.nextActions.warnings.map(w => `
-        <div style="background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.2);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:var(--red)">⚠️ ${w}</div>
+        <div style="background:rgba(246,176,107,0.08);border:1px solid rgba(246,176,107,0.2);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:var(--accent)">ℹ️ ${w}</div>
       `).join('') : ''}
+      ${d.nextActions.status.length ? `
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+        ${d.nextActions.status.map(s => `<span style="background:rgba(255,255,255,0.05);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--muted)">${s}</span>`).join('')}
+      </div>` : ''}
       ${d.nextActions.actions.map((a, i) => `
         <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;${i < d.nextActions.actions.length - 1 ? 'border-bottom:1px solid var(--border)' : ''}">
           <span style="color:var(--accent);font-size:14px;line-height:1.2">›</span>

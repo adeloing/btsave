@@ -375,41 +375,67 @@ async function fetchAllData() {
   const totalShortBTC = futurePositions.filter(p => p.direction === 'sell').reduce((s, p) => s + Math.abs(p.size), 0);
   const hasPuts = optionPositions.some(p => p.optionType === 'P');
   const putSize = optionPositions.filter(p => p.optionType === 'P').reduce((s, p) => s + Math.abs(p.size), 0);
-  const untriggeredStops = orders.filter(o => o.direction === 'sell' && o.trigger && o.state !== 'triggered');
+  const putStrike = optionPositions.filter(p => p.optionType === 'P')[0]?.strike || 0;
+  const putExpiry = optionPositions.filter(p => p.optionType === 'P')[0]?.expiry || '';
+  const untriggeredStops = orders.filter(o => o.direction === 'sell' && o.trigger);
   const debtUSD = aave ? aave.totalDebtUSD : 0;
   const hf = aave ? aave.healthFactor : 0;
+  const usdcAvailable = aave ? (aave.usdcCol || 0) : 0;
 
-  const nextActions = { zone: currentZone, pctFromATH: +pctFromATH.toFixed(1), actions: [], warnings: [] };
+  const nextActions = { zone: currentZone, pctFromATH: +pctFromATH.toFixed(1), actions: [], warnings: [], status: [] };
 
-  // Warnings about mid-route state
-  const theoreticalShorts = currentStep * SHORT_PER_STEP;
-  if (totalShortBTC < theoreticalShorts * 0.5) {
-    nextActions.warnings.push(`Shorts accumulés: ${totalShortBTC.toFixed(3)} BTC vs théorique ${theoreticalShorts.toFixed(3)} BTC (strat prise en route)`);
+  // Mid-route: strategy was entered below ATH, zones are theoretical reference
+  // Actions based on REAL state, not theoretical zone triggers
+  const midRoute = true; // Strategy was taken in progress
+
+  // Status: show real position state
+  nextActions.status.push('HF: ' + hf.toFixed(2) + (hf >= 2.0 ? ' ✅' : hf >= 1.5 ? ' ⚠️' : ' 🚨'));
+  nextActions.status.push('Dette: $' + Math.round(debtUSD).toLocaleString('fr-FR'));
+  nextActions.status.push('Short perp: ' + totalShortBTC.toFixed(3) + ' BTC');
+  if (hasPuts) nextActions.status.push('Puts: ' + putSize.toFixed(2) + '× $' + putStrike.toLocaleString('fr-FR') + ' ' + putExpiry);
+  nextActions.status.push('Sell stops: ' + untriggeredStops.length + ' en attente');
+  if (usdcAvailable > 0) nextActions.status.push('Buffer USDC AAVE: $' + Math.round(usdcAvailable).toLocaleString('fr-FR'));
+
+  if (midRoute) {
+    nextActions.warnings.push('Stratégie prise en cours de route — règles de zone adaptées à l\'état réel');
   }
 
-  if (currentZone === 'accumulation') {
-    nextActions.actions.push('Accumuler: emprunter ' + BORROW_PER_STEP + ' USDC → swap WBTC');
-    nextActions.actions.push('Short: ' + SHORT_PER_STEP + ' BTC au prochain palier');
-  } else if (currentZone === 'zone1') {
-    if (hasPuts) nextActions.actions.push('Vendre 50% puts (' + (putSize * 0.5).toFixed(2) + ' BTC)');
-    nextActions.actions.push('Rembourser 25% dette (~' + Math.round(debtUSD * 0.25) + ' USDC)');
-  } else if (currentZone === 'zone2') {
-    if (hasPuts) nextActions.actions.push('Vendre puts restants (' + putSize.toFixed(2) + ' BTC)');
-    nextActions.actions.push('Rembourser 40% dette (~' + Math.round(debtUSD * 0.40) + ' USDC)');
-  } else if (currentZone === 'stop') {
-    nextActions.actions.push('STOP tout nouvel emprunt');
-    if (hasPuts) nextActions.actions.push('Surveiller puts — vendre si dégradation');
-    nextActions.actions.push('Surveiller HF (actuel: ' + hf.toFixed(2) + ')');
-  } else if (currentZone === 'emergency') {
-    if (hasPuts) nextActions.actions.push('Vendre tous les puts immédiatement');
-    nextActions.actions.push('Rembourser dette max avec USDC disponible');
+  // Actions based on real HF and position state
+  if (hf < 1.3) {
+    nextActions.actions.push('🚨 HF CRITIQUE (' + hf.toFixed(2) + ') — rembourser dette immédiatement');
+    if (hasPuts) nextActions.actions.push('Vendre puts pour libérer du cash');
+    nextActions.actions.push('Utiliser buffer USDC ($' + Math.round(usdcAvailable).toLocaleString('fr-FR') + ') pour rembourser');
+  } else if (hf < 1.5) {
+    nextActions.actions.push('⚠️ HF bas (' + hf.toFixed(2) + ') — surveiller de près');
+    nextActions.actions.push('Préparer remboursement partiel si dégradation');
     nextActions.actions.push('AUCUN nouvel emprunt');
-    if (hf < 1.5) nextActions.actions.push('⚠️ HF CRITIQUE — rembourser en urgence');
+  } else if (hf >= 2.0) {
+    // HF healthy — standard operations
+    nextActions.actions.push('HF sain — pas d\'action urgente');
+
+    // If price is in accumulation zone theoretically
+    if (currentZone === 'accumulation') {
+      nextActions.actions.push('Accumuler: emprunter ' + BORROW_PER_STEP + ' USDC → swap WBTC');
+      nextActions.actions.push('Short: ' + SHORT_PER_STEP + ' BTC au prochain palier');
+    } else {
+      // Below accumulation but HF is fine — monitor mode
+      nextActions.actions.push('AUCUN nouvel emprunt (prix sous zone accumulation)');
+      nextActions.actions.push('Sell stops en place pour shorter si descente continue');
+      if (hasPuts) nextActions.actions.push('Conserver puts (protection active)');
+    }
+  } else {
+    // HF between 1.5-2.0
+    nextActions.actions.push('HF correct (' + hf.toFixed(2) + ') — mode surveillance');
+    nextActions.actions.push('AUCUN nouvel emprunt');
+    if (hasPuts) nextActions.actions.push('Surveiller puts — vendre si HF descend sous 1.5');
   }
 
-  // Upside actions
+  // Directional actions
+  if (nextStepDown) {
+    nextActions.actions.push('▼ Si ' + nextStepDown.prix.toLocaleString('fr-FR') + ': sell stop 0.095 BTC se déclenche');
+  }
   if (nextStepUp) {
-    nextActions.actions.push('À la hausse (' + nextStepUp.prix + '): conserver shorts pour contango');
+    nextActions.actions.push('▲ Si ' + nextStepUp.prix.toLocaleString('fr-FR') + ': conserver shorts pour contango');
   }
 
   return {
