@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 const https = require('https');
 const TelegramBot = require('node-telegram-bot-api');
-const { createCanvas } = require('canvas');
-const Chart = require('chart.js/auto');
+const puppeteer = require('puppeteer');
+const fs = require('fs').promises;
 
 // === CONFIG ===
 const BOT_TOKEN = 'REDACTED_BOT_TOKEN';
 const CHAT_ID = 'REDACTED_CHAT_ID';
-const POLL_INTERVAL = 60000; // 60s
+const POLL_INTERVAL = 30000; // 30s as requested
+const DASHBOARD_URL = 'http://localhost:3001';
 
 // Strategy constants (matching server.js)
 const ATH = 126000;
@@ -16,23 +17,14 @@ const STEP_SIZE = ATH * 0.05; // 6300
 const BORROW_PER_STEP = WBTC_START * 3200; // 12480
 const SHORT_PER_STEP = +(WBTC_START * 0.0244).toFixed(3); // 0.095
 
-// Colors (matching dashboard)
-const COLORS = {
-  bg: '#121016',
-  accent: '#f6b06b',
-  green: '#6ee7a0', 
-  red: '#f87171',
-  purple: '#c4a6e8',
-  blue: '#60a5fa',
-  muted: '#7a7285'
-};
-
 // State tracking
 let currentPrice = 0;
 let currentStep = 0;
-let priceHistory = [];
+let currentZone = 'accumulation';
 let lastNotificationStep = null;
+let lastNotificationZone = null;
 let athTracked = ATH;
+let browser = null;
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
@@ -43,6 +35,82 @@ const fmtBTC = (n, d=4) => n.toFixed(d) + ' BTC';
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
+}
+
+// === BROWSER MANAGEMENT ===
+async function initBrowser() {
+  if (browser) return browser;
+  
+  browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    defaultViewport: { width: 1200, height: 800 }
+  });
+  
+  log('Browser initialized');
+  return browser;
+}
+
+async function closeBrowser() {
+  if (browser) {
+    await browser.close();
+    browser = null;
+    log('Browser closed');
+  }
+}
+
+// === DASHBOARD SCREENSHOT ===
+async function captureChartScreenshot() {
+  try {
+    await initBrowser();
+    const page = await browser.newPage();
+    
+    // Navigate to dashboard
+    await page.goto(DASHBOARD_URL, { waitUntil: 'networkidle2' });
+    
+    // Login (check if we're redirected to login page)
+    const currentUrl = page.url();
+    if (currentUrl.includes('login.html') || currentUrl.includes('login')) {
+      log('Login required, authenticating...');
+      
+      await page.waitForSelector('input[name="username"]', { timeout: 10000 });
+      await page.type('input[name="username"]', 'xou');
+      await page.type('input[name="password"]', 'REDACTED_PASSWORD');
+      await page.click('button[type="submit"]');
+      
+      // Wait for redirect and navigation
+      await page.waitForNavigation({ waitUntil: 'networkidle2' });
+    }
+    
+    // Navigate to the main dashboard (served from root)
+    if (page.url().includes('login.html')) {
+      await page.goto(DASHBOARD_URL + '/', { waitUntil: 'networkidle2' });
+    }
+    
+    // Wait for chart to load
+    await page.waitForSelector('.chart-wrap canvas', { timeout: 15000 });
+    
+    // Wait a bit more for chart animation to complete using standard setTimeout
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // Capture just the chart area
+    const chartElement = await page.$('.chart-wrap');
+    if (!chartElement) {
+      throw new Error('Chart element not found');
+    }
+    
+    const chartScreenshot = await chartElement.screenshot({
+      type: 'png',
+      quality: 90
+    });
+    
+    await page.close();
+    return chartScreenshot;
+    
+  } catch (error) {
+    log(`Screenshot capture failed: ${error.message}`);
+    return null;
+  }
 }
 
 // === PRICE FETCHING ===
@@ -87,7 +155,6 @@ async function fetchCurrentPrice() {
 
 // === STEP & ZONE CALCULATIONS ===
 function calculateCurrentStep(price) {
-  // Count steps down from ATH
   let step = 0;
   const steps = Array.from({length: 19}, (_, i) => {
     const stepPrice = athTracked - (i+1) * STEP_SIZE;
@@ -103,220 +170,84 @@ function calculateCurrentStep(price) {
 function getCurrentZone(price) {
   const pctFromATH = ((price - athTracked) / athTracked) * 100;
   
-  if (pctFromATH > -12) return 'accumulation';
+  if (pctFromATH > -12.3) return 'accumulation';
   else if (pctFromATH <= -12.3 && pctFromATH > -17.6) return 'zone1';
   else if (pctFromATH <= -17.6 && pctFromATH > -21) return 'zone2'; 
   else if (pctFromATH <= -21 && pctFromATH > -26) return 'stop';
   else return 'emergency';
 }
 
-function getZoneDetails(zone) {
-  const zones = {
-    accumulation: {
-      emoji: '✅',
-      name: 'Accumulation normale', 
-      description: 'Au-dessus ATH −12%',
-      actions: {
-        auto: ['Continue grid trading normal', 'Borrow USDC selon paliers'],
-        manual: []
-      }
-    },
-    zone1: {
-      emoji: '⚠️',
-      name: 'Zone critique -12.3%',
-      description: 'Vendre 50% puts + rembourser 25% dette',
-      actions: {
-        auto: ['Stop nouveaux emprunts temporairement'],
-        manual: [
-          '🔧 Vendre 50% des positions PUT sur Deribit',
-          '💰 Rembourser 25% de la dette USDT sur AAVE',
-          '📊 Réajuster allocation 79/18/3'
-        ]
-      }
-    },
-    zone2: {
-      emoji: '🔶', 
-      name: 'Zone critique -17.6%',
-      description: 'Vendre puts restants + rembourser 40% dette',
-      actions: {
-        auto: ['Arrêt complet nouveaux emprunts'],
-        manual: [
-          '🔧 Vendre toutes les positions PUT restantes',
-          '💰 Rembourser 40% de la dette USDT sur AAVE',
-          '⚡ Réduire exposition futures/perpetuels'
-        ]
-      }
-    },
-    stop: {
-      emoji: '🛑',
-      name: 'STOP emprunts - Zone -21%', 
-      description: 'Arrêt total emprunts',
-      actions: {
-        auto: ['STOP complet de tous les emprunts'],
-        manual: [
-          '🚫 Arrêter définitivement les emprunts AAVE',
-          '⚡ Réduire fortement les shorts',
-          '🔒 Mode préservation du capital'
-        ]
-      }
-    },
-    emergency: {
-      emoji: '🚨',
-      name: 'URGENCE - Zone -26%',
-      description: 'Liquidation partielle d\'urgence',
-      actions: {
-        auto: ['LIQUIDATION PARTIELLE DÉCLENCHÉE'],
-        manual: [
-          '🚨 VENDRE IMMÉDIATEMENT toutes les positions PUT',
-          '💸 Rembourser un maximum de dette USDT',
-          '🆘 Considérer vente partielle WBTC si HF < 1.2',
-          '📞 CONTACT IMMÉDIAT équipe risk management'
-        ]
-      }
-    }
-  };
-  return zones[zone] || zones.accumulation;
-}
-
-// === SPARKLINE GENERATION ===
-function generateSparkline(prices) {
-  if (prices.length < 2) return '📊 —';
-  
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-  const range = max - min;
-  
-  if (range === 0) return '📊 ━━━━━━━━';
-  
-  const chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-  const sparkline = prices.slice(-8).map(price => {
-    const normalized = (price - min) / range;
-    const index = Math.min(Math.floor(normalized * chars.length), chars.length - 1);
-    return chars[index];
-  }).join('');
-  
-  const trend = prices[prices.length - 1] > prices[0] ? '📈' : '📉';
-  return `${trend} ${sparkline}`;
-}
-
-// === CHART GENERATION ===
-async function generateMiniChart(prices) {
-  if (prices.length < 2) return null;
-  
-  try {
-    const canvas = createCanvas(400, 150);
-    const ctx = canvas.getContext('2d');
-    
-    // Create gradient background
-    const gradient = ctx.createLinearGradient(0, 0, 0, 150);
-    gradient.addColorStop(0, 'rgba(246, 176, 107, 0.3)');
-    gradient.addColorStop(1, 'rgba(246, 176, 107, 0.05)');
-    
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: prices.map((_, i) => i),
-        datasets: [{
-          data: prices,
-          borderColor: COLORS.accent,
-          backgroundColor: gradient,
-          borderWidth: 2,
-          fill: true,
-          tension: 0.2,
-          pointRadius: 0
-        }]
-      },
-      options: {
-        responsive: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: { enabled: false }
-        },
-        scales: {
-          x: { display: false },
-          y: { 
-            display: false,
-            beginAtZero: false
-          }
-        },
-        elements: {
-          point: { radius: 0 }
-        }
-      }
-    });
-    
-    return canvas.toBuffer('image/png');
-  } catch (error) {
-    log(`Chart generation failed: ${error.message}`);
-    return null;
-  }
-}
-
-// === NOTIFICATION BUILDER ===
-function buildNotificationMessage(priceData, stepChange, zone) {
-  const { price, step, direction, isNewATH } = priceData;
-  const zoneInfo = getZoneDetails(zone);
+// === NOTIFICATION FORMATTING ===
+function buildStepNotification(price, step, direction, zone) {
   const pctFromATH = ((price - athTracked) / athTracked * 100).toFixed(2);
   
-  let header = '';
-  if (isNewATH) {
-    header = `🚀 <b>NOUVEL ATH!</b> 🚀\n${fmtUSD(price)} (+${((price - athTracked) / athTracked * 100).toFixed(2)}%)`;
-  } else {
-    const stepLabel = direction === 'down' ? `Palier ${step} franchi ⬇️` : `Retour étape ${step} ⬆️`;
-    header = `${zoneInfo.emoji} <b>${stepLabel}</b>\n💰 <b>${fmtUSD(price)}</b> (ATH ${pctFromATH}%)`;
-  }
-
-  const sparkline = generateSparkline(priceHistory.slice(-12));
+  let header, zoneSection, actions;
   
-  let autoActions = '';
-  if (zoneInfo.actions.auto.length > 0) {
-    autoActions = '\n⚡ <b>Actions AUTO:</b>\n';
-    zoneInfo.actions.auto.forEach(action => {
-      autoActions += `• ${action}\n`;
-    });
+  // Header
+  const stepText = direction === 'down' ? `↘️ PALIER ${step} FRANCHI` : `↗️ REMONTÉE PALIER ${step}`;
+  header = `━━━━━━━━━━━━━━━━━━━━\n${stepText}\n━━━━━━━━━━━━━━━━━━━━\n\n💰 Prix: ${fmtUSD(price)}\n📉 ATH: ${pctFromATH}% (${fmtUSD(athTracked)})\n📊 Step: ${step}/19`;
+  
+  // Zone-specific content
+  switch(zone) {
+    case 'accumulation':
+      zoneSection = '\n━━━ 🟢 ACCUMULATION ━━━';
+      actions = '\n⚡ ACTIONS AUTO:\n▸ Deribit: Stop Market SELL ' + SHORT_PER_STEP + ' BTC déclenché\n▸ Funding/contango: accrual normal\n\n🔧 ACTIONS MANUELLES:\n▸ AAVE: Borrow ' + fmt(BORROW_PER_STEP) + ' USDC\n▸ DeFiLlama: Swap USDC → WBTC\n▸ Déposer aEthWBTC sur AAVE';
+      break;
+      
+    case 'zone1':
+      zoneSection = '\n━━━ 🟡 ZONE1 (-12.3%) ━━━';
+      actions = '\n⚡ ACTIONS AUTO:\n▸ Deribit: Stop nouveaux shorts\n▸ AAVE: Pause nouveaux emprunts\n\n🔧 ACTIONS MANUELLES:\n▸ Vendre 50% des PUT Deribit\n▸ Rembourser 25% dette AAVE\n▸ Réduire exposition leverage';
+      break;
+      
+    case 'zone2':
+      zoneSection = '\n━━━ 🟠 ZONE2 (-17.6%) ━━━';
+      actions = '\n⚡ ACTIONS AUTO:\n▸ Stop complet nouveaux positions\n▸ Alerte risque élevé\n\n🔧 ACTIONS MANUELLES:\n▸ Vendre PUT restants\n▸ Rembourser 40% dette restante\n▸ Préparer liquidation partielle';
+      break;
+      
+    case 'stop':
+      zoneSection = '\n━━━ 🔴 STOP (-21%) ━━━';
+      actions = '\n⚡ ACTIONS AUTO:\n▸ ⛔ STOP tous les emprunts\n▸ 🚨 Mode survie activé\n\n🔧 ACTIONS MANUELLES:\n▸ ⛔ STOP tous les emprunts\n▸ Fermer positions risquées\n▸ Préserver capital restant';
+      break;
+      
+    case 'emergency':
+      zoneSection = '\n━━━ ⛔ EMERGENCY (-26%) ━━━';
+      actions = '\n⚡ ACTIONS AUTO:\n▸ 🚨 LIQUIDATION PARTIELLE\n▸ 📞 ALERTE ÉQUIPE\n\n🔧 ACTIONS MANUELLES:\n▸ 🚨 VENDRE TOUS les PUT\n▸ 🚨 Rembourser maximum dette\n▸ 🆘 Contact équipe risk management';
+      break;
   }
+  
+  const footer = '\n━━━━━━━━━━━━━━━━━━━━\nBTSAVE Hybrid 79/18/3\n━━━━━━━━━━━━━━━━━━━━';
+  
+  return header + zoneSection + actions + footer;
+}
 
-  let manualActions = '';  
-  if (zoneInfo.actions.manual.length > 0) {
-    manualActions = '\n🔧 <b>Actions MANUELLES:</b>\n';
-    zoneInfo.actions.manual.forEach(action => {
-      manualActions += `• ${action}\n`;
-    });
-  }
-
-  const strategyInfo = `
-📊 <b>Situation actuelle:</b>
-• Zone: <b>${zoneInfo.name}</b>
-• Step: ${step}/19 (${fmtUSD(STEP_SIZE)} par palier)
-• Emprunt/palier: ${fmtUSD(BORROW_PER_STEP)}
-• Short/palier: ${SHORT_PER_STEP} BTC
-• ATH suivi: ${fmtUSD(athTracked)}
-
-${sparkline}
-`;
-
-  return `${header}${strategyInfo}${autoActions}${manualActions}
-
-💡 <i>Stratégie BTSAVE Hybrid - Répartition cible 79/18/3</i>`;
+function buildATHNotification(newPrice, oldATH) {
+  const pctGain = ((newPrice - oldATH) / oldATH * 100).toFixed(2);
+  
+  return `━━━━━━━━━━━━━━━━━━━━\n🚀 NOUVEL ATH ATTEINT!\n━━━━━━━━━━━━━━━━━━━━\n\n💰 Prix: ${fmtUSD(newPrice)} (+${pctGain}%)\n🎯 Ancien ATH: ${fmtUSD(oldATH)}\n\n━━━ RESET DU CYCLE ━━━\n\n🔧 ACTIONS DE RESET:\n▸ Fermer TOUS les shorts Deribit\n▸ Rembourser 100% dette AAVE\n▸ Conserver tout WBTC accumulé\n▸ Rééquilibrer: 79% WBTC / 18% USDC AAVE / 3% USDC Deribit\n▸ Recalculer tous les paliers\n\n━━━━━━━━━━━━━━━━━━━━`;
 }
 
 // === NOTIFICATION SENDING ===
-async function sendNotification(message, chartBuffer = null) {
+async function sendNotification(message, screenshotBuffer = null) {
   try {
-    const options = {
-      chat_id: CHAT_ID,
-      text: message,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true
-    };
-
-    if (chartBuffer) {
-      await bot.sendPhoto(CHAT_ID, chartBuffer, {
-        caption: message,
+    if (screenshotBuffer) {
+      // Send photo first with short caption (header only)
+      const shortCaption = message.split('\n\n')[0] + '\n' + message.split('\n\n')[1];
+      
+      await bot.sendPhoto(CHAT_ID, screenshotBuffer, {
+        caption: shortCaption,
         parse_mode: 'HTML'
       });
+      
+      // Then send full text message
+      await bot.sendMessage(CHAT_ID, message, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      });
     } else {
-      await bot.sendMessage(CHAT_ID, message, options);
+      await bot.sendMessage(CHAT_ID, message, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      });
     }
     
     log('Notification sent successfully');
@@ -325,57 +256,56 @@ async function sendNotification(message, chartBuffer = null) {
   }
 }
 
-// === STEP DETECTION & NOTIFICATION ===
+// === MONITORING LOGIC ===
 async function checkPriceAndNotify() {
   try {
     const price = await fetchCurrentPrice();
     currentPrice = price;
-    priceHistory.push(price);
-    
-    // Keep history manageable
-    if (priceHistory.length > 100) {
-      priceHistory = priceHistory.slice(-50);
-    }
     
     const step = calculateCurrentStep(price);
     const zone = getCurrentZone(price);
     
     // Check for new ATH
     if (price > athTracked) {
+      const oldATH = athTracked;
       athTracked = price;
-      const message = buildNotificationMessage({
-        price,
-        step: 0,
-        direction: 'up',
-        isNewATH: true
-      }, null, 'accumulation');
       
-      const chartBuffer = await generateMiniChart(priceHistory.slice(-24));
-      await sendNotification(message, chartBuffer);
+      const message = buildATHNotification(price, oldATH);
+      const screenshot = await captureChartScreenshot();
+      
+      await sendNotification(message, screenshot);
       
       lastNotificationStep = 0;
+      lastNotificationZone = 'accumulation';
       currentStep = 0;
+      currentZone = 'accumulation';
+      
       log(`New ATH detected: ${fmtUSD(price)}`);
       return;
     }
     
-    // Check for step change
-    if (step !== currentStep && (lastNotificationStep === null || step !== lastNotificationStep)) {
+    // Check for step change OR zone change
+    const stepChanged = step !== currentStep && (lastNotificationStep === null || step !== lastNotificationStep);
+    const zoneChanged = zone !== currentZone && (lastNotificationZone === null || zone !== lastNotificationZone);
+    
+    if (stepChanged || zoneChanged) {
       const direction = step > currentStep ? 'down' : 'up';
-      const message = buildNotificationMessage({
-        price,
-        step,
-        direction,
-        isNewATH: false
-      }, { from: currentStep, to: step }, zone);
+      const message = buildStepNotification(price, step, direction, zone);
+      const screenshot = await captureChartScreenshot();
       
-      const chartBuffer = await generateMiniChart(priceHistory.slice(-24));
-      await sendNotification(message, chartBuffer);
+      await sendNotification(message, screenshot);
       
       lastNotificationStep = step;
+      lastNotificationZone = zone;
       currentStep = step;
-      log(`Step change detected: ${currentStep} -> ${step} (${direction})`);
+      currentZone = zone;
+      
+      log(`Change detected - Step: ${currentStep} -> ${step}, Zone: ${currentZone} -> ${zone}`);
     }
+    
+    // Update current state
+    currentStep = step;
+    currentZone = zone;
     
     log(`Price: ${fmtUSD(price)} | Step: ${step} | Zone: ${zone}`);
     
@@ -385,62 +315,78 @@ async function checkPriceAndNotify() {
 }
 
 // === TEST NOTIFICATIONS ===
-async function sendTestNotification(scenario) {
-  let testData, testZone;
+async function sendTestNotifications() {
+  log('📢 Sending 5 test notifications...');
   
-  switch (scenario) {
-    case 'step_down':
-      testData = {
-        price: 113400, // Step 2
-        step: 2,
-        direction: 'down',
-        isNewATH: false
-      };
-      testZone = 'accumulation';
-      // Simulate price history
-      priceHistory = [126000, 125000, 120000, 118000, 115000, 113500, 113400];
-      break;
-      
-    case 'critical_zone':
-      testData = {
-        price: 110484, // -12.3%
-        step: 3,
-        direction: 'down', 
-        isNewATH: false
-      };
-      testZone = 'zone1';
-      priceHistory = [126000, 123000, 118000, 115000, 112000, 110800, 110484];
-      break;
-      
-    case 'new_ath':
-      testData = {
-        price: 128500,
-        step: 0,
-        direction: 'up',
-        isNewATH: true
-      };
-      testZone = 'accumulation';
-      priceHistory = [126000, 126200, 126800, 127200, 127800, 128200, 128500];
-      athTracked = 128500;
-      break;
-      
-    default:
-      throw new Error('Unknown test scenario');
+  const scenarios = [
+    {
+      name: 'Step 2 - Accumulation',
+      price: 113400,
+      step: 2,
+      direction: 'down',
+      zone: 'accumulation'
+    },
+    {
+      name: 'Zone1 - Critical (-12.3%)',
+      price: 110502,
+      step: 3,
+      direction: 'down',
+      zone: 'zone1'
+    },
+    {
+      name: 'Zone2 - Danger (-17.6%)',
+      price: 103824,
+      step: 5,
+      direction: 'down',
+      zone: 'zone2'
+    },
+    {
+      name: 'Recovery - Step 1',
+      price: 119700,
+      step: 1,
+      direction: 'up',
+      zone: 'accumulation'
+    },
+    {
+      name: 'New ATH Reset',
+      price: 128000,
+      isATH: true
+    }
+  ];
+  
+  for (let i = 0; i < scenarios.length; i++) {
+    const scenario = scenarios[i];
+    log(`📤 Sending test ${i+1}/5: ${scenario.name}`);
+    
+    let message;
+    if (scenario.isATH) {
+      message = `🧪 [TEST ${i+1}/5]\n\n` + buildATHNotification(scenario.price, athTracked);
+    } else {
+      message = `🧪 [TEST ${i+1}/5]\n\n` + buildStepNotification(scenario.price, scenario.step, scenario.direction, scenario.zone);
+    }
+    
+    // Capture screenshot for each test
+    const screenshot = await captureChartScreenshot();
+    await sendNotification(message, screenshot);
+    
+    // Wait 2 seconds between messages to avoid rate limits
+    if (i < scenarios.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
   }
   
-  const message = buildNotificationMessage(testData, null, testZone);
-  const chartBuffer = await generateMiniChart(priceHistory.slice(-12));
-  
-  await sendNotification(`🧪 <b>[TEST]</b> ${message}`, chartBuffer);
-  log(`Test notification sent: ${scenario}`);
+  log('✅ All test notifications sent!');
 }
 
 // === MAIN LOOP ===
 async function startMonitoring() {
-  log('🚀 BTSAVE Price Notifier started');
+  log('🚀 BTSAVE Price Notifier v2 started');
   log(`Monitoring BTC_USDC-PERPETUAL every ${POLL_INTERVAL/1000}s`);
   log(`ATH tracked: ${fmtUSD(athTracked)}`);
-  log(`Step size: ${fmtUSD(STEP_SIZE)}`);
+  log(`Dashboard: ${DASHBOARD_URL}`);
+  
+  // Initial setup
+  await initBrowser();
   
   // Initial price fetch
   await checkPriceAndNotify();
@@ -450,22 +396,35 @@ async function startMonitoring() {
 }
 
 // === GRACEFUL SHUTDOWN ===
-process.on('SIGTERM', () => {
-  log('Received SIGTERM, shutting down gracefully');
+async function shutdown() {
+  log('Shutting down gracefully...');
+  await closeBrowser();
   process.exit(0);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+process.on('uncaughtException', (error) => {
+  log(`Uncaught exception: ${error.message}`);
+  shutdown();
 });
 
-process.on('SIGINT', () => {
-  log('Received SIGINT, shutting down gracefully');
-  process.exit(0);
-});
-
-// Export for testing
+// === ENTRY POINT ===
 if (require.main === module) {
-  startMonitoring().catch(error => {
-    log(`Failed to start monitoring: ${error.message}`);
-    process.exit(1);
-  });
+  // Check for test argument
+  if (process.argv[2] === 'test') {
+    sendTestNotifications().then(() => {
+      setTimeout(shutdown, 5000); // Allow time for final messages
+    }).catch(error => {
+      log(`Test failed: ${error.message}`);
+      shutdown();
+    });
+  } else {
+    startMonitoring().catch(error => {
+      log(`Failed to start monitoring: ${error.message}`);
+      shutdown();
+    });
+  }
 } else {
-  module.exports = { sendTestNotification };
+  module.exports = { sendTestNotifications };
 }
