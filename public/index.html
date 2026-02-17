@@ -378,6 +378,22 @@ function render(d) {
       </div>` : ''}
     </div>
 
+    <!-- Prochaines Actions -->
+    ${d.nextActions ? `
+    <div class="section" style="border-color:rgba(246,176,107,0.3);background:linear-gradient(135deg,rgba(246,176,107,0.06),var(--card))">
+      <h3>🎯 Prochaines actions <span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0">(${d.nextActions.pctFromATH}% ATH — ${d.nextActions.zone})</span></h3>
+      ${d.nextActions.warnings.length ? d.nextActions.warnings.map(w => `
+        <div style="background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.2);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:var(--red)">⚠️ ${w}</div>
+      `).join('') : ''}
+      ${d.nextActions.actions.map((a, i) => `
+        <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;${i < d.nextActions.actions.length - 1 ? 'border-bottom:1px solid var(--border)' : ''}">
+          <span style="color:var(--accent);font-size:14px;line-height:1.2">›</span>
+          <span style="font-size:12px;line-height:1.4">${a}</span>
+        </div>
+      `).join('')}
+    </div>
+    ` : ''}
+
     <!-- Règles de gestion -->
     <div class="section">
       <h3>📋 Règles de gestion</h3>
@@ -416,26 +432,27 @@ function drawChart(d) {
     label: { display: true, content: fmt(Math.round(d.price)), position: 'start', backgroundColor: 'rgba(246,176,107,0.3)', color: '#f6b06b', font: { size: 10, weight: 'bold' } }
   };
 
-  // Zone lines
-  const zoneLines = [
-    { pct: 0.88, color: 'rgba(110,231,160,0.4)', label: 'ATH-12%' },
-    { pct: 0.79, color: 'rgba(248,113,113,0.4)', label: 'ATH-21%' },
-  ];
-  zoneLines.forEach((z, i) => {
-    const yVal = d.ATH * z.pct;
-    annotations['zone' + i] = {
-      type: 'line', yMin: yVal, yMax: yVal,
-      borderColor: z.color, borderWidth: 1, borderDash: [4,4],
-      label: { display: true, content: z.label, position: 'end', backgroundColor: 'transparent', color: z.color.replace('0.4', '0.8'), font: { size: 9 } }
+  // Step lines: current step + next step down
+  if (d.currentStepPrice) {
+    annotations.stepCurrent = {
+      type: 'line', yMin: d.currentStepPrice, yMax: d.currentStepPrice,
+      borderColor: 'rgba(196,166,232,0.5)', borderWidth: 1, borderDash: [4,4],
+      label: { display: true, content: 'Step ' + d.currentStep + ' · $' + fmt(d.currentStepPrice), position: 'start', backgroundColor: 'transparent', color: 'rgba(196,166,232,0.8)', font: { size: 9 } }
     };
-  });
+  }
+  if (d.nextStepDown) {
+    annotations.stepDown = {
+      type: 'line', yMin: d.nextStepDown.prix, yMax: d.nextStepDown.prix,
+      borderColor: 'rgba(248,113,113,0.5)', borderWidth: 1, borderDash: [4,4],
+      label: { display: true, content: 'Step ' + d.nextStepDown.step + ' ▼ $' + fmt(d.nextStepDown.prix), position: 'start', backgroundColor: 'transparent', color: 'rgba(248,113,113,0.8)', font: { size: 9 } }
+    };
+  }
 
-  // Zoom chart around current price ± 2 steps
-  const zoomPadding = d.stepSize * 2.5;
-  const priceMin = d.price - zoomPadding;
-  const priceMax = d.price + zoomPadding;
-  const chartMin = Math.max(Math.min(...candles.map(c => c.l), priceMin), priceMin - d.stepSize);
-  const chartMax = Math.min(Math.max(...candles.map(c => c.h), priceMax), priceMax + d.stepSize);
+  // Chart bounds: lower = next step down, upper = max price in 24h
+  const nextDown = d.nextStepDown ? d.nextStepDown.prix : d.price - d.stepSize;
+  const maxPrice24h = Math.max(...candles.map(c => c.h));
+  const chartMin = nextDown - d.stepSize * 0.15;
+  const chartMax = maxPrice24h + d.stepSize * 0.15;
 
   if (chart) chart.destroy();
   

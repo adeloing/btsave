@@ -179,9 +179,9 @@ const HISTORY_TTL = 300000;
 async function fetchPriceHistory() {
   if (Date.now() - historyCache.ts < HISTORY_TTL && historyCache.data) return historyCache.data;
   const end = Date.now();
-  const start = end - 3 * 86400000;
+  const start = end - 1 * 86400000; // 24h only
   return new Promise((resolve) => {
-    const url = `/api/v2/public/get_tradingview_chart_data?instrument_name=BTC_USDC-PERPETUAL&start_timestamp=${start}&end_timestamp=${end}&resolution=60`;
+    const url = `/api/v2/public/get_tradingview_chart_data?instrument_name=BTC_USDC-PERPETUAL&start_timestamp=${start}&end_timestamp=${end}&resolution=15`;
     https.get({ hostname: 'www.deribit.com', path: url }, res => {
       let d = ''; res.on('data', c => d += c);
       res.on('end', () => {
@@ -356,13 +356,66 @@ async function fetchAllData() {
   const pctFromATH = ((price - ATH) / ATH) * 100;
   let currentZone = 'accumulation';
   if (pctFromATH > -12.3) currentZone = 'accumulation';
-  else if (pctFromATH > -17.6) currentZone = 'zone1'; // -12.3%
-  else if (pctFromATH > -21) currentZone = 'zone2'; // -17.6%
-  else if (pctFromATH > -26) currentZone = 'stop'; // -21%
-  else currentZone = 'emergency'; // -26%
+  else if (pctFromATH > -17.6) currentZone = 'zone1';
+  else if (pctFromATH > -21) currentZone = 'zone2';
+  else if (pctFromATH > -26) currentZone = 'stop';
+  else currentZone = 'emergency';
+
+  // Compute next step above and below current price
+  let nextStepDown = null, nextStepUp = null, currentStepPrice = null;
+  for (const s of steps) {
+    if (price >= s.prix) { nextStepDown = s; break; }
+  }
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (price < steps[i].prix) { nextStepUp = steps[i]; break; }
+  }
+  if (currentStep > 0) currentStepPrice = steps[currentStep - 1].prix;
+
+  // Real-state-aware next actions
+  const totalShortBTC = futurePositions.filter(p => p.direction === 'sell').reduce((s, p) => s + Math.abs(p.size), 0);
+  const hasPuts = optionPositions.some(p => p.optionType === 'P');
+  const putSize = optionPositions.filter(p => p.optionType === 'P').reduce((s, p) => s + Math.abs(p.size), 0);
+  const untriggeredStops = orders.filter(o => o.direction === 'sell' && o.trigger && o.state !== 'triggered');
+  const debtUSD = aave ? aave.totalDebtUSD : 0;
+  const hf = aave ? aave.healthFactor : 0;
+
+  const nextActions = { zone: currentZone, pctFromATH: +pctFromATH.toFixed(1), actions: [], warnings: [] };
+
+  // Warnings about mid-route state
+  const theoreticalShorts = currentStep * SHORT_PER_STEP;
+  if (totalShortBTC < theoreticalShorts * 0.5) {
+    nextActions.warnings.push(`Shorts accumulés: ${totalShortBTC.toFixed(3)} BTC vs théorique ${theoreticalShorts.toFixed(3)} BTC (strat prise en route)`);
+  }
+
+  if (currentZone === 'accumulation') {
+    nextActions.actions.push('Accumuler: emprunter ' + BORROW_PER_STEP + ' USDC → swap WBTC');
+    nextActions.actions.push('Short: ' + SHORT_PER_STEP + ' BTC au prochain palier');
+  } else if (currentZone === 'zone1') {
+    if (hasPuts) nextActions.actions.push('Vendre 50% puts (' + (putSize * 0.5).toFixed(2) + ' BTC)');
+    nextActions.actions.push('Rembourser 25% dette (~' + Math.round(debtUSD * 0.25) + ' USDC)');
+  } else if (currentZone === 'zone2') {
+    if (hasPuts) nextActions.actions.push('Vendre puts restants (' + putSize.toFixed(2) + ' BTC)');
+    nextActions.actions.push('Rembourser 40% dette (~' + Math.round(debtUSD * 0.40) + ' USDC)');
+  } else if (currentZone === 'stop') {
+    nextActions.actions.push('STOP tout nouvel emprunt');
+    if (hasPuts) nextActions.actions.push('Surveiller puts — vendre si dégradation');
+    nextActions.actions.push('Surveiller HF (actuel: ' + hf.toFixed(2) + ')');
+  } else if (currentZone === 'emergency') {
+    if (hasPuts) nextActions.actions.push('Vendre tous les puts immédiatement');
+    nextActions.actions.push('Rembourser dette max avec USDC disponible');
+    nextActions.actions.push('AUCUN nouvel emprunt');
+    if (hf < 1.5) nextActions.actions.push('⚠️ HF CRITIQUE — rembourser en urgence');
+  }
+
+  // Upside actions
+  if (nextStepUp) {
+    nextActions.actions.push('À la hausse (' + nextStepUp.prix + '): conserver shorts pour contango');
+  }
 
   return {
     price, ATH, stepSize: STEP_SIZE, currentStep, steps,
+    nextStepDown, nextStepUp, currentStepPrice,
+    nextActions,
     strategy: {
       name: 'Hybrid ZERO-LIQ Aggressive Accumulator + Quarterly Contango Hedge',
       split: '79/18/3',
