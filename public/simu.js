@@ -4,8 +4,8 @@ const fmtUSD = n => n < 0 ? '−$' + fmt(Math.abs(Math.round(n))) : '$' + fmt(Ma
 const fmtBTC = (n, d=4) => n.toFixed(d) + ' BTC';
 const $ = id => document.getElementById(id);
 
-// §STATE
-let CFG = {}, PAS = 0, stepPrices = [];
+// §STATE - Hybrid ZERO-LIQ Strategy
+let CFG = {}, stepPrices = [];
 let prevStep = 0, maxStep = 0;
 let firstCrossed = {};
 let deribitPos = {};       // step -> { entry } — active shorts
@@ -17,54 +17,149 @@ const DERIBIT_FEE = 0.0005; // 0.05% taker (stop orders)
 let crossings = 0, roundTrips = 0;
 let log = [], savedConfigHTML = '';
 
+// Management zones thresholds (%)
+const ZONE1_THRESHOLD = -12.3;  // -12.3%
+const ZONE2_THRESHOLD = -17.6;  // -17.6% 
+const STOP_THRESHOLD = -21.0;   // -21%
+const EMERGENCY_THRESHOLD = -26.0; // -26%
+
+// Puts tracking
+let putsPortfolio = { bought: 0, cost: 0, sold: 0, pnl: 0 }; // tracks puts positions
+
 // §INIT
-function updateBtcStep() {
-  const w = +$('cfg-wbtc').value || 0;
-  $('cfg-btc-step').value = (0.05 * w).toFixed(4);
-}
 document.addEventListener('DOMContentLoaded', () => {
-  updateBtcStep();
-  $('cfg-wbtc').addEventListener('input', updateBtcStep);
+  // Auto-update calculated fields
+  const updateCalcs = () => {
+    const ath = +$('cfg-ath').value || 126000;
+    const wbtcStart = +$('cfg-wbtc-start').value || 3.90;
+    
+    // Buffer USDC AAVE = 18%
+    $('cfg-buffer-pct').value = '18';
+    
+    // Marge Deribit = 3%  
+    $('cfg-deribit-pct').value = '3';
+  };
+  
+  updateCalcs();
+  $('cfg-ath').addEventListener('input', updateCalcs);
+  $('cfg-wbtc-start').addEventListener('input', updateCalcs);
 });
+
+// §MANAGEMENT-ZONES
+function getManagementZone(price, ath) {
+  const pct = ((price - ath) / ath) * 100;
+  
+  if (pct <= EMERGENCY_THRESHOLD) return 'emergency';
+  if (pct <= STOP_THRESHOLD) return 'stop';
+  if (pct <= ZONE2_THRESHOLD) return 'zone2';
+  if (pct <= ZONE1_THRESHOLD) return 'zone1';
+  return 'accumulation';
+}
+
+function getZoneColor(zone) {
+  const colors = {
+    accumulation: '#6ee7a0',   // green
+    zone1: '#f6b06b',          // orange
+    zone2: '#f87171',          // red
+    stop: '#ef4444',           // dark red
+    emergency: '#dc2626'       // very dark red
+  };
+  return colors[zone] || '#6ee7a0';
+}
+
+function getZoneLabel(zone) {
+  const labels = {
+    accumulation: 'ACCUMULATION',
+    zone1: 'ZONE 1 (-12.3%)',
+    zone2: 'ZONE 2 (-17.6%)', 
+    stop: 'STOP (-21%)',
+    emergency: 'EMERGENCY (-26%)'
+  };
+  return labels[zone] || 'ACCUMULATION';
+}
 
 // §LAUNCH
 function launch() {
+  const ath = +$('cfg-ath').value;
+  const wbtcStart = +$('cfg-wbtc-start').value;
+  const existingDebt = +$('cfg-existing-debt').value;
+  const contango = +$('cfg-contango').value;
+  const cycleDays = +$('cfg-cycle-days').value;
+  const putCostPctYear = +$('cfg-put-cost').value;
+
   CFG = {
-    ATH: +$('cfg-ath').value, wbtc: +$('cfg-wbtc').value,
-    usdtCol: +$('cfg-usdt-col').value, debtUSDT: +$('cfg-debt-usdt').value,
-    debtUSDC: +$('cfg-debt-usdc').value, liqPct: +$('cfg-liq').value,
-    bps: 0.05 * (+$('cfg-wbtc').value), ret: +$('cfg-btc-return').value,
-    deribitMargin: +($('cfg-deribit-margin')?.value || 5000),
-    contango: +($('cfg-contango')?.value || 10),
-    cycleDays: +($('cfg-cycle-days')?.value || 180),
+    ATH: ath,
+    wbtcStart: wbtcStart,
+    stepSize: ath * 0.05,
+    borrowPerStep: Math.round(wbtcStart * 3200 / 100) * 100, // rounded to nearest 100
+    shortPerStep: +(wbtcStart * 0.0244).toFixed(3),
+    bufferUSDC: wbtcStart * ath * 0.18,
+    deribitTarget: wbtcStart * ath * 0.03,
+    contango: contango,
+    cycleDays: cycleDays,
+    putCostPctYear: putCostPctYear,
+    existingDebt: existingDebt
   };
-  PAS = 0.05 * CFG.ATH;
+
+  // Generate step prices (ATH down to -95%)
   stepPrices = [CFG.ATH];
-  for (let i = 1; i <= 19; i++) stepPrices[i] = CFG.ATH - i * PAS;
+  for (let i = 1; i <= 19; i++) {
+    stepPrices[i] = CFG.ATH - i * CFG.stepSize;
+  }
 
   prevStep = 0; maxStep = 0; firstCrossed = {};
   deribitPos = {}; deribitRealizedPnL = 0; deribitFees = 0; deribitWithdrawn = 0; notionalSum = 0;
   roundTrips = 0; crossings = 0; log = [];
+  putsPortfolio = { bought: 0, cost: 0, sold: 0, pnl: 0 };
   $('action-log').innerHTML = '';
   $('log-section').style.display = 'none';
 
   savedConfigHTML = $('phase-config').innerHTML;
 
-  // Grid table — ordres aux prix des steps (pas de bornes)
-  let rows = stepPrices.map((p, i) => i === 0
-    ? `<tr style="border-bottom:1px solid var(--border)"><td class="tc b" style="color:var(--accent)">ATH</td><td class="tc b">${fmtUSD(p)}</td><td class="tc muted">—</td></tr>`
-    : `<tr style="border-bottom:1px solid var(--border)" id="sr-${i}"><td class="tc b">${i}</td><td class="tc b">${fmtUSD(p)}</td><td class="tc">${fmtUSD(Math.round(CFG.bps * p))}</td></tr>`
-  ).join('');
-  $('phase-config').innerHTML = `<div class="section"><h3>📐 Grille Deribit</h3><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="color:var(--muted);text-transform:uppercase;font-size:9px;letter-spacing:0.5px"><th class="tc">Step</th><th class="tc">Trigger</th><th class="tc">Montant</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  // Grid table — step prices and accumulation amounts
+  let rows = stepPrices.map((p, i) => {
+    if (i === 0) {
+      return `<tr style="border-bottom:1px solid var(--border)"><td class="tc b" style="color:var(--accent)">ATH</td><td class="tc b">${fmtUSD(p)}</td><td class="tc muted">—</td><td class="tc muted">—</td></tr>`;
+    }
+    
+    const zone = getManagementZone(p, CFG.ATH);
+    const zoneColor = getZoneColor(zone);
+    const zoneStyle = zone !== 'accumulation' ? `style="color:${zoneColor}"` : '';
+    
+    return `<tr style="border-bottom:1px solid var(--border)" id="sr-${i}"><td class="tc b">${i}</td><td class="tc b">${fmtUSD(p)}</td><td class="tc">${fmtBTC(CFG.shortPerStep)}</td><td class="tc" ${zoneStyle}>${getZoneLabel(zone)}</td></tr>`;
+  }).join('');
+
+  $('phase-config').innerHTML = `
+    <div class="section">
+      <h3>📐 Grille Hybrid ZERO-LIQ Strategy</h3>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead>
+            <tr style="color:var(--muted);text-transform:uppercase;font-size:9px;letter-spacing:0.5px">
+              <th class="tc">Step</th><th class="tc">Trigger</th><th class="tc">Short BTC</th><th class="tc">Zone</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted)">
+        <div><strong>Formules:</strong></div>
+        <div>• step_size = ${fmtUSD(CFG.stepSize)} (ATH × 5%)</div>
+        <div>• borrow_per_step = ${fmtUSD(CFG.borrowPerStep)} (${fmtBTC(CFG.wbtcStart)} × 3200)</div>
+        <div>• short_per_step = ${fmtBTC(CFG.shortPerStep)} (${fmtBTC(CFG.wbtcStart)} × 0.0244)</div>
+      </div>
+    </div>`;
 
   $('phase-sim').style.display = '';
   $('header-price').style.display = '';
   $('header-stats').style.display = '';
   $('hdr-ath').textContent = fmtUSD(CFG.ATH);
-  $('hdr-pas').textContent = fmtUSD(PAS);
+  $('hdr-pas').textContent = fmtUSD(CFG.stepSize);
+  
   const pi = $('price-input');
   pi.value = CFG.ATH;
   pi.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  
   sim(CFG.ATH);
 }
 
@@ -81,67 +176,84 @@ function resetSim() {
   $('log-section').style.display = 'none';
   const pi = $('price-input');
   if (pi) { pi.disabled = false; pi.style.opacity = ''; }
+  
   prevStep = 0; maxStep = 0; firstCrossed = {};
   deribitPos = {}; deribitRealizedPnL = 0; deribitFees = 0; deribitWithdrawn = 0; notionalSum = 0;
   roundTrips = 0; crossings = 0; log = [];
+  putsPortfolio = { bought: 0, cost: 0, sold: 0, pnl: 0 };
 }
 
 function go() { const v = +$('price-input').value; if (v > 0) sim(v); }
 
 // §CALC — compute full state for a given step position
 function calcState(price, cur) {
-  // ═══ P1: BTC reste sur AAVE, shorts sur Deribit ═══
-  const p1Btc = CFG.wbtc; // CONSTANT — jamais swappé
+  // Current zone
+  const currentZone = getManagementZone(price, CFG.ATH);
+  
+  // ═══ WBTC Collateral (79% initially + accumulated) ═══
+  let accumulatedBtc = 0;
+  for (let i = 1; i <= maxStep; i++) {
+    if (firstCrossed[i]) {
+      accumulatedBtc += CFG.shortPerStep; // We bought shortPerStep BTC at each first crossing
+    }
+  }
+  const totalWbtc = CFG.wbtcStart + accumulatedBtc;
 
-  // ═══ P2: accumulation (premières traversées uniquement) ═══
+  // ═══ USDC AAVE (18% buffer + transfers from Deribit) ═══
+  const usdcAave = CFG.bufferUSDC + deribitWithdrawn;
+
+  // ═══ Debt Calculation ═══
   let p2Debt = 0;
-  for (let i = 1; i <= maxStep; i++) p2Debt += CFG.bps * stepPrices[i];
-  const p2Btc = maxStep * CFG.bps;
+  for (let i = 1; i <= maxStep; i++) {
+    if (firstCrossed[i]) {
+      p2Debt += CFG.borrowPerStep; // Fixed borrow amount per step
+    }
+  }
+  const totalDebt = CFG.existingDebt + p2Debt;
 
-  // ═══ Deribit: shorts actifs ═══
-  let deribitUnrealized = 0, shortCount = 0, shortBtc = 0, deribitNotional = 0;
+  // ═══ Deribit: active shorts ═══
+  let deribitUnrealized = 0, shortCount = 0, deribitNotional = 0;
   for (const [step, pos] of Object.entries(deribitPos)) {
-    deribitUnrealized += CFG.bps * (pos.entry - price);
-    deribitNotional += CFG.bps * price;
-    shortBtc += CFG.bps;
+    const stepPrice = stepPrices[step];
+    const pnl = CFG.shortPerStep * (pos.entry - price);
+    deribitUnrealized += pnl;
+    deribitNotional += CFG.shortPerStep * price;
     shortCount++;
   }
-  const deribitTotal = deribitUnrealized + deribitRealizedPnL;
-  const deribitEquity = CFG.deribitMargin + deribitTotal - deribitWithdrawn;
-  const deribitIM = deribitNotional * 0.05;
 
-  // Transfert: gains Deribit → AAVE
-  const deribitKeep = Math.max(CFG.deribitMargin * 0.5, deribitIM * 2);
+  const deribitTotal = deribitUnrealized + deribitRealizedPnL;
+  const deribitEquity = CFG.deribitTarget + deribitTotal - deribitWithdrawn;
+  const deribitIM = deribitNotional * 0.05; // 5% initial margin
+
+  // Transfers logic
+  const deribitKeep = Math.max(CFG.deribitTarget * 0.5, deribitIM * 2);
   const transferable = Math.max(0, deribitEquity - deribitKeep);
   const needsTopup = Math.max(0, deribitIM * 1.5 - deribitEquity);
 
-  // ═══ AAVE (avec transferts cumulés) ═══
-  const btcCol = p1Btc + p2Btc;
-  const usdcOnAave = CFG.usdtCol + deribitWithdrawn;
-  const totalDebtUSDT = CFG.debtUSDT + p2Debt;
-  const totalDebt = totalDebtUSDT + CFG.debtUSDC;
-  const colUSD = btcCol * price + usdcOnAave;
-  const hf = totalDebt > 0 ? (colUSD * CFG.liqPct / 100) / totalDebt : 99;
-  const ltv = colUSD > 0 ? totalDebt / colUSD * 100 : 0;
-  const liq = btcCol > 0 ? (totalDebt / (CFG.liqPct / 100) - usdcOnAave) / btcCol : 0;
-  const aaveNet = colUSD - totalDebt;
-  const colUSDnoTransfer = btcCol * price + CFG.usdtCol;
-  const hfNoTransfer = totalDebt > 0 ? (colUSDnoTransfer * CFG.liqPct / 100) / totalDebt : 99;
+  // ═══ AAVE Health Calculation (78% liquidation threshold) ═══
+  const totalCollateralUSD = (totalWbtc * price) + usdcAave;
+  const hf = totalDebt > 0 ? (totalCollateralUSD * 0.78) / totalDebt : 99;
+  const ltv = totalCollateralUSD > 0 ? totalDebt / totalCollateralUSD * 100 : 0;
+  const liqPrice = totalWbtc > 0 ? (totalDebt / 0.78 - usdcAave) / totalWbtc : 0;
+  const aaveNet = totalCollateralUSD - totalDebt;
 
-  // ═══ Contango ═══
+  // ═══ Portfolio Total ═══
+  const portfolio = totalCollateralUSD - totalDebt + deribitEquity;
+
+  // ═══ Contango Calculation ═══
   const contangoYear = deribitNotional * CFG.contango / 100;
   const contangoMonth = contangoYear / 12;
 
-  // ═══ Portfolio total (transferts s'annulent) ═══
-  const portfolio = (btcCol * price + CFG.usdtCol) - totalDebt + CFG.deribitMargin + deribitTotal;
+  // ═══ Puts Cost Estimation ═══
+  const putsCostYear = totalWbtc * price * CFG.putCostPctYear / 100; // Cost to hedge accumulated BTC
 
   return {
-    p1Btc, p2Btc, p2Debt, btcCol, usdcOnAave, totalDebt, colUSD,
-    hf, hfNoTransfer, ltv, liq, aaveNet,
-    shortCount, shortBtc, deribitNotional, deribitUnrealized, deribitTotal,
-    deribitEquity, deribitIM, deribitKeep, transferable, needsTopup,
-    deribitWithdrawn,
-    contangoYear, contangoMonth, portfolio
+    currentZone,
+    totalWbtc, usdcAave, accumulatedBtc, p2Debt, totalDebt, 
+    totalCollateralUSD, hf, ltv, liqPrice, aaveNet,
+    shortCount, deribitNotional, deribitUnrealized, deribitTotal, deribitEquity,
+    deribitIM, deribitKeep, transferable, needsTopup, deribitWithdrawn,
+    contangoYear, contangoMonth, putsCostYear, portfolio
   };
 }
 
@@ -206,12 +318,6 @@ function renderLog() {
         </div>
       </div>
       <div style="margin-bottom:6px">${actionsHTML}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:10px;color:var(--muted);padding-top:6px;border-top:1px solid var(--border)">
-        <span>AAVE Col: <strong style="color:var(--text)">${e.snap.col}</strong></span>
-        <span>AAVE Dette: <strong style="color:var(--red)">${e.snap.debt}</strong></span>
-        <span>Deribit: <strong style="color:var(--text)">${e.snap.deribit}</strong></span>
-        <span class="green">Contango: <strong>${e.snap.contango}/an</strong></span>
-      </div>
     </div>`;
   }).join('');
 }
@@ -221,61 +327,34 @@ function sim(price) {
   // §END-CHECK: price above ATH = cycle terminé
   if (price > CFG.ATH && maxStep >= 1) {
     let actions = [];
+    
+    // Close all shorts
     if (prevStep > 0) {
       crossings += prevStep;
       for (let i = prevStep; i > 0; i--) {
         const entry = deribitPos[i] ? deribitPos[i].entry : stepPrices[i];
-        const exitPrice = stepPrices[i]; // BUY STOP se déclenche au step price
-        const fee = CFG.bps * exitPrice * DERIBIT_FEE;
-        const pnl = CFG.bps * (entry - exitPrice) - fee;
+        const fee = CFG.shortPerStep * price * DERIBIT_FEE;
+        const pnl = CFG.shortPerStep * (entry - price) - fee;
         deribitFees += fee;
         deribitRealizedPnL += pnl;
         delete deribitPos[i];
-        actions.push({ dir: 'up', step: i, triggerPrice: stepPrices[i], mode: 'auto',
-          desc: `Fermer SHORT ${fmtBTC(CFG.bps)} @ ${fmtUSD(exitPrice)} (BUY STOP)`,
+        actions.push({ dir: 'up', step: i, triggerPrice: price, mode: 'auto',
+          desc: `Fermer SHORT ${fmtBTC(CFG.shortPerStep)} au nouvel ATH`,
           steps: [
-            { icon: '📊', text: `Deribit: BUY STOP ${fmtBTC(CFG.bps)} @ ${fmtUSD(exitPrice)} — fermer short step ${i}` },
+            { icon: '📊', text: `Deribit: BUY ${fmtBTC(CFG.shortPerStep)} @ ${fmtUSD(price)}` },
             { icon: '💸', text: `Fee: −${fmtUSD(fee)}`, highlight: 'var(--red)' },
           ] });
       }
     }
 
-    // P2 settlement @ ATH
-    let p2Debt = 0;
-    for (let i = 1; i <= maxStep; i++) p2Debt += CFG.bps * stepPrices[i];
-    const p2Btc = maxStep * CFG.bps;
-    const p2Revenue = p2Btc * CFG.ATH;
-    const p2Profit = p2Revenue - p2Debt;
-    const p2ProfitBtc = p2Profit / CFG.ATH;
-
-    // Contango earned over cycle
-    // Average notional per crossing × contango rate × cycle days
-    const avgNotional = crossings > 0 ? notionalSum / crossings : 0;
-    const contangoEarned = avgNotional * (CFG.contango / 100) * (CFG.cycleDays / 365);
-
-    // Deribit equity → BTC (fees deducted, contango added, withdrawals subtracted)
-    const deribitEquityATH = CFG.deribitMargin + deribitRealizedPnL + contangoEarned - deribitWithdrawn;
-    const deribitBtc = deribitEquityATH / CFG.ATH;
-    // USDC already on AAVE from transfers
-    const usdcOnAaveBtc = deribitWithdrawn / CFG.ATH;
-
-    // Final BTC = P1 + P2 profit + USDC on AAVE + Deribit equity remaining (all in BTC)
-    const finalBtc = CFG.wbtc + p2ProfitBtc + usdcOnAaveBtc + deribitBtc - CFG.ret;
-
-    const retUSD = CFG.ret * CFG.ATH;
-    const pnlColor = finalBtc >= CFG.wbtc ? 'green' : 'red';
-
-    if (actions.length) {
-      const S = calcState(CFG.ATH, 0);
-      log.unshift({ price: CFG.ATH, from: prevStep, to: 0, dir: 'up', actions,
-        snap: { hf: S.hf.toFixed(2), col: fmtUSD(S.colUSD), debt: fmtUSD(S.totalDebt),
-                deribit: fmtUSD(deribitEquityATH), contango: fmtUSD(S.contangoYear), portfolio: fmtUSD(S.portfolio) } });
-    }
+    // Calculate final BTC after cycle completion
+    const S = calcState(CFG.ATH, 0);
+    const finalBtc = S.totalWbtc;
 
     $('hdr-price').textContent = fmtUSD(price);
     $('hdr-pct').textContent = '+' + ((price - CFG.ATH) / CFG.ATH * 100).toFixed(1) + '%';
     $('hdr-steps').textContent = crossings;
-    $('badge-step').textContent = '✅ TERMINÉ';
+    $('badge-step').textContent = '✅ NOUVEAU ATH';
     $('badge-step').style.background = 'linear-gradient(135deg, #6ee7a0, #4ade80)';
     $('price-input').disabled = true;
     $('price-input').style.opacity = '0.4';
@@ -283,52 +362,27 @@ function sim(price) {
     $('sim-dashboard').innerHTML = `
       <div class="section" style="text-align:center;border:1px solid rgba(110,231,160,0.3);background:rgba(110,231,160,0.05)">
         <h3 style="color:var(--green);margin-bottom:12px">🏁 Cycle terminé — Nouveau ATH</h3>
-        <div style="font-size:11px;color:var(--muted)">Palier max : Step ${maxStep} (${fmtUSD(stepPrices[maxStep])}) | ${crossings} paliers franchis | ${roundTrips} RT</div>
+        <div style="font-size:11px;color:var(--muted)">Palier max : Step ${maxStep} | ${crossings} paliers franchis | Accumulation terminée</div>
       </div>
 
       <div class="section" style="text-align:center">
-        <h3>Nouveau collatéral BTC</h3>
+        <h3>Nouveau collatéral BTC total</h3>
         <div style="font-size:28px;font-weight:800;color:var(--green);margin:8px 0">${fmtBTC(finalBtc)}</div>
         <div style="font-size:14px;color:var(--muted)">${fmtUSD(finalBtc * CFG.ATH)}</div>
         <div style="margin-top:12px;display:flex;justify-content:center;gap:16px;font-size:12px;flex-wrap:wrap">
-          <span>P1: ${fmtBTC(CFG.wbtc)}</span>
-          <span class="green">P2: +${fmtBTC(p2ProfitBtc)}</span>
-          ${usdcOnAaveBtc > 0.0001 ? `<span class="green">USDC: +${fmtBTC(usdcOnAaveBtc)}</span>` : ''}
-          <span class="${deribitBtc >= 0 ? 'green' : 'red'}">Deribit: ${deribitBtc >= 0 ? '+' : ''}${fmtBTC(deribitBtc)}</span>
-          ${CFG.ret > 0 ? `<span class="red">−${fmtBTC(CFG.ret)}</span>` : ''}
+          <span>Initial: ${fmtBTC(CFG.wbtcStart)}</span>
+          <span class="green">Accumulé: +${fmtBTC(S.accumulatedBtc)}</span>
         </div>
       </div>
 
       <div class="section">
-        <h3>📊 Détail en USD</h3>
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <tbody>
-            <tr style="border-bottom:1px solid var(--border)">
-              <td style="padding:8px 0">P2 Accumulation</td>
-              <td style="padding:8px 0;text-align:right;font-weight:700;color:var(--green)">+${fmtUSD(p2Profit)}</td>
-            </tr>
-            <tr style="border-bottom:1px solid var(--border)">
-              <td style="padding:8px 0;color:var(--muted);font-size:11px;padding-left:12px">↳ ${fmtBTC(p2Btc)} acheté sous ATH, vendu @ ${fmtUSD(CFG.ATH)}</td>
-              <td></td>
-            </tr>
-            <tr style="border-bottom:1px solid var(--border)">
-              <td style="padding:8px 0">Frais Deribit (0.05% taker)</td>
-              <td style="padding:8px 0;text-align:right;font-weight:700;color:var(--red)">−${fmtUSD(deribitFees)}</td>
-            </tr>
-            <tr style="border-bottom:1px solid var(--border)">
-              <td style="padding:8px 0">Contango (${CFG.contango}%/an × ${CFG.cycleDays}j)</td>
-              <td style="padding:8px 0;text-align:right;font-weight:700;color:var(--green)">+${fmtUSD(contangoEarned)}</td>
-            </tr>
-            <tr style="border-bottom:1px solid var(--border)">
-              <td style="padding:8px 0;color:var(--muted);font-size:11px;padding-left:12px">↳ Net Deribit: ${fmtUSD(deribitRealizedPnL + contangoEarned)} (frais + contango)</td>
-              <td></td>
-            </tr>
-            ${CFG.ret > 0 ? `<tr style="border-bottom:1px solid var(--border)">
-              <td style="padding:8px 0">Remboursement BTC</td>
-              <td style="padding:8px 0;text-align:right;color:var(--red)">−${fmtUSD(retUSD)}</td>
-            </tr>` : ''}
-          </tbody>
-        </table>
+        <h3>📊 Actions de reset</h3>
+        <div style="font-size:11px;line-height:1.6">
+          <div>✅ Fermer tous les shorts Deribit</div>
+          <div>✅ Rembourser 100% de la dette AAVE</div>
+          <div>✅ Conserver tout WBTC accumulé</div>
+          <div>⚠️ Rééquilibrer en 79% WBTC / 18% USDC AAVE / 3% USDC Deribit</div>
+        </div>
       </div>`;
 
     renderLog();
@@ -341,9 +395,9 @@ function sim(price) {
   for (let i = 1; i <= 19; i++) if (price <= stepPrices[i]) cur = i;
   if (cur > maxStep) maxStep = cur;
 
-  // §STEP-CHANGES — actions par plateforme avec transferts
+  // §STEP-CHANGES — actions selon la zone de gestion
   let actions = [];
-  let transferInfo = null; // calculated after all position changes
+  const currentZone = getManagementZone(price, CFG.ATH);
 
   if (prevStep !== null && cur !== prevStep) {
     crossings += Math.abs(cur - prevStep);
@@ -351,42 +405,76 @@ function sim(price) {
     if (cur > prevStep) {
       // ═══ GOING DOWN ═══
       for (let i = prevStep + 1; i <= cur; i++) {
-        const notional = CFG.bps * stepPrices[i];
+        const triggerPrice = stepPrices[i];
+        const zone = getManagementZone(triggerPrice, CFG.ATH);
+        const notional = CFG.shortPerStep * triggerPrice;
         const fee = notional * DERIBIT_FEE;
         const marginReq = notional * 0.05;
         deribitFees += fee;
         deribitRealizedPnL -= fee;
 
+        // Check if we should stop borrowing (stop/emergency zones)
+        const shouldBorrow = zone === 'accumulation' || zone === 'zone1' || zone === 'zone2';
+
         if (!firstCrossed[i]) {
           firstCrossed[i] = true;
-          deribitPos[i] = { entry: stepPrices[i] };
-          actions.push({ dir: 'down', step: i, triggerPrice: stepPrices[i], mode: 'manuel',
-            desc: `1ère traversée — hedge + accumulation`,
-            steps: [
-              { icon: '📊', text: `DERIBIT`, highlight: 'var(--accent)', section: true },
-              { icon: '⚡', text: `SELL STOP ${fmtBTC(CFG.bps)} filled @ ${fmtUSD(stepPrices[i])} — short ouvert`, badge: 'auto' },
-              { icon: '💸', text: `Fee: −${fmtUSD(fee)} (0.05% taker)`, highlight: 'var(--red)' },
-              { icon: '📊', text: `Marge initiale: +${fmtUSD(marginReq)} (5% de ${fmtUSD(notional)})` },
+          deribitPos[i] = { entry: triggerPrice };
+          
+          let steps = [
+            { icon: '📊', text: `DERIBIT`, highlight: 'var(--accent)', section: true },
+            { icon: '⚡', text: `SELL STOP ${fmtBTC(CFG.shortPerStep)} @ ${fmtUSD(triggerPrice)}`, badge: 'auto' },
+            { icon: '💸', text: `Fee: −${fmtUSD(fee)} (0.05%)`, highlight: 'var(--red)' }
+          ];
+
+          if (shouldBorrow) {
+            steps.push(
               { icon: '🏦', text: `AAVE`, highlight: 'var(--accent)', section: true },
-              { icon: '📝', text: `Emprunter ${fmtUSD(Math.round(notional))} USDT (dette P2)`, badge: 'manuel' },
-              { icon: '📝', text: `Acheter ${fmtBTC(CFG.bps)} via DEX`, badge: 'manuel' },
-              { icon: '📝', text: `Déposer ${fmtBTC(CFG.bps)} en collatéral`, badge: 'manuel' },
-              { icon: '🔄', text: `TRANSFERT`, highlight: 'var(--accent)', section: true },
-              { icon: '✅', text: `Aucun — opérations indépendantes sur chaque plateforme` },
-            ] });
+              { icon: '📝', text: `Emprunter ${fmtUSD(CFG.borrowPerStep)} USDC`, badge: 'manuel' },
+              { icon: '📝', text: `DeFiLlama: ${fmtUSD(CFG.borrowPerStep)} USDC → ${fmtBTC(CFG.shortPerStep)} aEthWBTC`, badge: 'manuel' }
+            );
+          } else {
+            steps.push(
+              { icon: '🏦', text: `AAVE — STOP: pas d'emprunt en zone ${getZoneLabel(zone)}`, section: true, highlight: 'var(--red)' }
+            );
+          }
+
+          // Zone-specific management actions
+          if (zone === 'zone1') {
+            steps.push(
+              { icon: '🎯', text: `ZONE 1`, highlight: 'var(--orange)', section: true },
+              { icon: '📝', text: `Vendre 50% des puts → rembourser 25% dette`, badge: 'manuel', highlight: 'var(--orange)' }
+            );
+          } else if (zone === 'zone2') {
+            steps.push(
+              { icon: '🎯', text: `ZONE 2`, highlight: 'var(--red)', section: true },
+              { icon: '📝', text: `Vendre puts restants → rembourser 40% dette restante`, badge: 'manuel', highlight: 'var(--red)' }
+            );
+          } else if (zone === 'emergency') {
+            steps.push(
+              { icon: '🚨', text: `EMERGENCY`, highlight: '#dc2626', section: true },
+              { icon: '📝', text: `Vendre tous puts + rembourser maximum de dette`, badge: 'manuel', highlight: '#dc2626' }
+            );
+          }
+
+          actions.push({
+            dir: 'down', step: i, triggerPrice, mode: shouldBorrow ? 'manuel' : 'auto',
+            desc: `${getZoneLabel(zone)} — 1ère traversée`,
+            steps
+          });
         } else {
+          // Re-traversée (round trip)
           roundTrips++;
-          deribitPos[i] = { entry: stepPrices[i] };
-          actions.push({ dir: 'down', step: i, triggerPrice: stepPrices[i], mode: 'auto',
-            desc: `Re-traversée — 100% automatique`,
+          deribitPos[i] = { entry: triggerPrice };
+          actions.push({
+            dir: 'down', step: i, triggerPrice, mode: 'auto',
+            desc: `Re-traversée automatique (${getZoneLabel(zone)})`,
             steps: [
               { icon: '📊', text: `DERIBIT`, highlight: 'var(--accent)', section: true },
-              { icon: '⚡', text: `SELL STOP ${fmtBTC(CFG.bps)} filled @ ${fmtUSD(stepPrices[i])} — short ré-ouvert`, badge: 'auto' },
-              { icon: '💸', text: `Fee: −${fmtUSD(fee)} (0.05% taker)`, highlight: 'var(--red)' },
-              { icon: '📊', text: `Marge requise: +${fmtUSD(marginReq)}` },
-              { icon: '🏦', text: `AAVE — Aucune action`, section: true },
-              { icon: '🔄', text: `TRANSFERT — Aucun`, section: true },
-            ] });
+              { icon: '⚡', text: `SELL STOP ${fmtBTC(CFG.shortPerStep)} @ ${fmtUSD(triggerPrice)}`, badge: 'auto' },
+              { icon: '💸', text: `Fee: −${fmtUSD(fee)}`, highlight: 'var(--red)' },
+              { icon: '🏦', text: `AAVE — Aucune action`, section: true }
+            ]
+          });
         }
       }
     } else {
@@ -394,61 +482,43 @@ function sim(price) {
       for (let i = prevStep; i > cur; i--) {
         const entry = deribitPos[i] ? deribitPos[i].entry : stepPrices[i];
         const exitPrice = stepPrices[i];
-        const fee = CFG.bps * exitPrice * DERIBIT_FEE;
-        const marginFreed = CFG.bps * exitPrice * 0.05;
-        const pnl = CFG.bps * (entry - exitPrice) - fee;
+        const fee = CFG.shortPerStep * exitPrice * DERIBIT_FEE;
+        const pnl = CFG.shortPerStep * (entry - exitPrice) - fee;
         deribitFees += fee;
         deribitRealizedPnL += pnl;
         delete deribitPos[i];
 
-        actions.push({ dir: 'up', step: i, triggerPrice: stepPrices[i], mode: 'auto',
-          desc: `Fermer short step ${i} — 100% automatique`,
+        actions.push({
+          dir: 'up', step: i, triggerPrice: exitPrice, mode: 'auto',
+          desc: `Fermer short automatiquement`,
           steps: [
-            { icon: '📊', text: `DERIBIT`, highlight: 'var(--accent)', section: true },
-            { icon: '⚡', text: `BUY STOP ${fmtBTC(CFG.bps)} filled @ ${fmtUSD(exitPrice)} — short fermé`, badge: 'auto' },
-            { icon: '💸', text: `Fee: −${fmtUSD(fee)} (0.05% taker)`, highlight: 'var(--red)' },
-            { icon: '📊', text: `Marge libérée: +${fmtUSD(marginFreed)}` },
-            { icon: '🏦', text: `AAVE — Aucune action`, section: true },
-          ] });
+            { icon: '📊', text: `BUY STOP ${fmtBTC(CFG.shortPerStep)} @ ${fmtUSD(exitPrice)}`, badge: 'auto' },
+            { icon: '💸', text: `Fee: −${fmtUSD(fee)}`, highlight: 'var(--red)' },
+            { icon: '💰', text: `PnL: ${fmtUSD(pnl)}`, highlight: pnl >= 0 ? 'var(--green)' : 'var(--red)' }
+          ]
+        });
       }
     }
 
-    // === TRANSFER — execute cumulative Deribit → AAVE ===
+    // Handle transfers after position changes
     const Stx = calcState(price, cur);
-    if (Stx.transferable > 100) {
-      // Transfer excess to AAVE as USDC collateral
+    if (actions.length && Stx.transferable > 100) {
+      const last = actions[actions.length - 1];
       const txAmount = Stx.transferable;
       deribitWithdrawn += txAmount;
-      transferInfo = { dir: 'deribit-to-aave', amount: txAmount,
-        text: `📊→🏦 Transférer ${fmtUSD(txAmount)} USDC Deribit → AAVE (collatéral)`,
-        sub: `Total transféré: ${fmtUSD(deribitWithdrawn)}`,
-        color: 'var(--green)', badge: 'manuel' };
-    } else if (Stx.needsTopup > 100) {
-      transferInfo = { dir: 'aave-to-deribit', amount: Stx.needsTopup,
-        text: `🏦→📊 Envoyer ~${fmtUSD(Stx.needsTopup)} USDC AAVE → Deribit (marge)`,
-        color: 'var(--red)', badge: 'manuel' };
-    } else {
-      transferInfo = { dir: 'none',
-        text: `✅ Aucun transfert nécessaire`,
-        color: 'var(--muted)' };
-    }
-
-    // Append transfer section to last action
-    if (actions.length) {
-      const last = actions[actions.length - 1];
-      last.steps.push({ icon: '🔄', text: `TRANSFERT INTER-PLATEFORMES`, highlight: 'var(--accent)', section: true });
-      last.steps.push({ icon: transferInfo.dir === 'none' ? '✅' : '⚠️', text: transferInfo.text,
-        highlight: transferInfo.color, badge: transferInfo.badge });
-      if (transferInfo.sub) {
-        last.steps.push({ icon: '📋', text: transferInfo.sub });
-      }
+      last.steps.push(
+        { icon: '🔄', text: `TRANSFERT`, highlight: 'var(--accent)', section: true },
+        { icon: '📊', text: `Transférer ${fmtUSD(txAmount)} USDC Deribit → AAVE`, badge: 'manuel', highlight: 'var(--green)' }
+      );
     }
   }
 
-  // §NOTIONAL-TRACKING — for contango calculation
+  // §NOTIONAL-TRACKING
   if (actions.length) {
     let openNotional = 0;
-    for (const [s, pos] of Object.entries(deribitPos)) openNotional += CFG.bps * pos.entry;
+    for (const [s, pos] of Object.entries(deribitPos)) {
+      openNotional += CFG.shortPerStep * pos.entry;
+    }
     notionalSum += openNotional;
   }
 
@@ -456,170 +526,66 @@ function sim(price) {
   const S = calcState(price, cur);
   const pct = ((price - CFG.ATH) / CFG.ATH * 100).toFixed(1);
 
-  // §ATH-PROJECTION — tout réalisé en BTC
-  let p2DebtATH = 0;
-  for (let i = 1; i <= maxStep; i++) p2DebtATH += CFG.bps * stepPrices[i];
-  const p2BtcATH = maxStep * CFG.bps;
-  const p2Profit = p2BtcATH * CFG.ATH - p2DebtATH;
-  // Deribit: realized + shorts closed at step prices - withdrawals
-  let deribitPnLAtATH = deribitRealizedPnL;
-  for (const [step, pos] of Object.entries(deribitPos)) {
-    deribitPnLAtATH += CFG.bps * (pos.entry - stepPrices[step]);
-  }
-  const deribitEquityATHproj = CFG.deribitMargin + deribitPnLAtATH - deribitWithdrawn;
-  const totalBtcATH = CFG.wbtc + p2Profit / CFG.ATH + deribitWithdrawn / CFG.ATH + deribitEquityATHproj / CFG.ATH - CFG.ret;
-
-  const hfC = S.hf < 1.5 ? 'red' : S.hf < 2.0 ? 'orange' : 'green';
-  const hfBg = { green: 'rgba(110,231,160,0.18)', orange: 'rgba(246,176,107,0.25)', red: 'rgba(248,113,113,0.25)' }[hfC];
-
-  // §NEXT-ACTIONS — detailed breakdown per upcoming trigger
-  const naRow = (icon, badge, text) => {
-    const bHTML = badge ? `<span class="action-mode ${badge}" style="font-size:9px;padding:1px 6px;flex-shrink:0">${badge.toUpperCase()}</span>` : '';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px">${icon ? `<span style="min-width:22px;text-align:center;font-size:12px">${icon}</span>` : ''}${bHTML}<span style="flex:1">${text}</span></div>`;
-  };
-
-  let nextHTML = '';
-
-  // UP triggers: closing shorts — trigger at stepPrices[step] (price rises above it)
-  for (let i = cur, n = 0; i >= 1 && n < 2; i--, n++) {
-    const trigger = stepPrices[i];
-    const amt = CFG.bps;
-    const marginFreed = amt * trigger * 0.05;
-    let rows = naRow('📊', 'auto', `BUY STOP ${fmtBTC(amt)} @ ${fmtUSD(trigger)} — fermer short step ${i}`);
-    rows += naRow('💰', '', `PnL short ≈ $0 (+contango sur quarterly)`);
-    rows += naRow('📊', '', `Marge libérée: ~${fmtUSD(marginFreed)}`);
-    // Estimate transfer after closing
-    const postShorts = S.shortCount - (n + 1);
-    if (postShorts === 0 && S.deribitEquity > CFG.deribitMargin * 0.5) {
-      rows += naRow('🔄', '', `<strong style="color:var(--green)">📊→🏦 Excédent Deribit transférable vers AAVE</strong>`);
-    } else {
-      rows += naRow('✅', '', `Aucune action manuelle`);
-    }
-    nextHTML += `<div style="margin-bottom:10px;padding:10px 12px;background:var(--bg);border-radius:8px;border-left:3px solid var(--green)">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-        <span style="font-size:15px">📈</span>
-        <span style="font-weight:700;color:var(--green)">HAUSSE</span>
-        <span style="font-weight:700">Step ${i}${i === 1 ? ' → ATH' : ` → ${i - 1}`}</span>
-        <span style="color:var(--muted);font-size:12px">trigger @ ${fmtUSD(trigger)}</span>
-        <span class="action-mode auto" style="margin-left:auto">AUTO</span>
-      </div>
-      <div>${rows}</div>
-    </div>`;
-  }
-
-  // DOWN triggers: opening shorts — trigger at stepPrices[step]
-  for (let i = cur + 1, n = 0; i <= 19 && n < 2; i++, n++) {
-    const trigger = stepPrices[i];
-    const amt = CFG.bps;
-    const amtUSD = amt * trigger;
-    const marginReq = amtUSD * 0.05;
-    const isFirst = !firstCrossed[i];
-    const mode = isFirst ? 'manuel' : 'auto';
-    let rows = naRow('📊', 'auto', `SELL STOP ${fmtBTC(amt)} @ ${fmtUSD(trigger)}`);
-    if (isFirst) {
-      rows += naRow('🏦', 'manuel', `Emprunter ${fmtUSD(Math.round(amtUSD))} USDT sur AAVE (P2)`);
-      rows += naRow('🏦', 'manuel', `Acheter ${fmtBTC(amt)} sur DEX → collatéral AAVE`);
-      rows += naRow('📊', '', `Marge Deribit: +${fmtUSD(marginReq)} (buffer: ${fmtUSD(S.deribitEquity)})`);
-      rows += naRow('🔄', '', `Aucun transfert inter-plateforme`);
-    } else {
-      rows += naRow('📊', '', `Marge Deribit: +${fmtUSD(marginReq)} (buffer: ${fmtUSD(S.deribitEquity)})`);
-      rows += naRow('✅', '', `100% automatique — aucune action manuelle`);
-    }
-    nextHTML += `<div style="margin-bottom:10px;padding:10px 12px;background:var(--bg);border-radius:8px;border-left:3px solid var(--red)">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-        <span style="font-size:15px">📉</span>
-        <span style="font-weight:700;color:var(--red)">BAISSE</span>
-        <span style="font-weight:700">Step ${i}</span>
-        <span style="color:var(--muted);font-size:12px">trigger @ ${fmtUSD(trigger)}</span>
-        <span class="action-mode ${mode}" style="margin-left:auto">${mode.toUpperCase()}</span>
-      </div>
-      <div>${rows}</div>
-    </div>`;
-  }
-
-  if (!nextHTML) nextHTML = '<div class="card-sub">Aucune action en attente</div>';
-
-  // §POSITIONS — active Deribit shorts + pending stop orders
-  let posHTML = '';
-  const sortedPos = Object.entries(deribitPos).sort((a, b) => +a[0] - +b[0]);
-  if (sortedPos.length) {
-    posHTML = sortedPos.map(([step, pos]) => {
-      const unr = CFG.bps * (pos.entry - price);
-      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:11px;border-bottom:1px solid rgba(255,255,255,0.03)">
-        <span>Step ${step} — SHORT ${fmtBTC(CFG.bps)} @ ${fmtUSD(pos.entry)}</span>
-        <span style="font-weight:700;color:${unr >= 0 ? 'var(--green)' : 'var(--red)'}">${fmtUSD(unr)}</span>
-      </div>`;
-    }).join('');
-  } else {
-    posHTML = `<div style="font-size:11px;color:var(--muted);text-align:center;padding:4px">Aucune position ouverte</div>`;
-  }
-
-  // Pending stop orders
-  let ordersHTML = '';
-  // BUY STOPs (close shorts on up)
-  if (cur >= 1 && deribitPos[cur]) {
-    ordersHTML += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:11px">
-      <span style="color:var(--green)">▲ BUY STOP ${fmtBTC(CFG.bps)} @ ${fmtUSD(stepPrices[cur])}</span>
-      <span class="action-mode auto" style="font-size:9px;padding:1px 6px">AUTO</span>
-    </div>`;
-  }
-  // SELL STOP (open short on down)
-  if (cur + 1 <= 19) {
-    const nxtFirst = !firstCrossed[cur + 1];
-    ordersHTML += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:11px">
-      <span style="color:var(--red)">▼ SELL STOP ${fmtBTC(CFG.bps)} @ ${fmtUSD(stepPrices[cur + 1])}</span>
-      <span class="action-mode ${nxtFirst ? 'manuel' : 'auto'}" style="font-size:9px;padding:1px 6px">${nxtFirst ? 'MANUEL' : 'AUTO'}</span>
-    </div>`;
-  }
-
   // §HEADER
   $('hdr-price').textContent = fmtUSD(price);
   $('hdr-pct').textContent = pct + '%';
   $('hdr-steps').textContent = crossings;
-  $('badge-step').textContent = cur === 0 ? 'ATH' : 'Step ' + cur + '/19';
+  
+  const zoneColor = getZoneColor(S.currentZone);
+  $('badge-step').textContent = cur === 0 ? 'ATH' : `Step ${cur}/19 (${getZoneLabel(S.currentZone)})`;
+  $('badge-step').style.background = cur === 0 ? '' : `linear-gradient(135deg, ${zoneColor}, ${zoneColor}aa)`;
+
+  // Highlight current step in grid
   for (let i = 1; i <= 19; i++) {
     const r = $('sr-' + i);
     if (r) r.style.background = i === cur ? 'rgba(246,176,107,0.15)' : '';
   }
 
+  const hfC = S.hf < 1.5 ? 'red' : S.hf < 2.0 ? 'orange' : 'green';
+  const hfBg = { green: 'rgba(110,231,160,0.18)', orange: 'rgba(246,176,107,0.25)', red: 'rgba(248,113,113,0.25)' }[hfC];
+
   // §RENDER
   $('sim-dashboard').innerHTML = `
     <div class="section" style="text-align:center;padding:12px">
-      <div class="card-label">Portefeuille total (AAVE + Deribit)</div>
+      <div class="card-label">Portfolio total</div>
       <div style="font-size:26px;font-weight:800;margin:6px 0;color:var(--green)">${fmtUSD(S.portfolio)}</div>
       <div style="font-size:11px;color:var(--muted)">AAVE net: ${fmtUSD(S.aaveNet)} · Deribit: ${fmtUSD(S.deribitEquity)}</div>
+    </div>
+
+    <div class="section" style="text-align:center;padding:8px 12px;background:rgba(${S.currentZone === 'accumulation' ? '110,231,160' : S.currentZone === 'zone1' ? '246,176,107' : '248,113,113'},0.1);border:1px solid rgba(${S.currentZone === 'accumulation' ? '110,231,160' : S.currentZone === 'zone1' ? '246,176,107' : '248,113,113'},0.3)">
+      <div style="font-size:14px;font-weight:700;color:${zoneColor}">${getZoneLabel(S.currentZone)}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:2px">Zone de gestion active</div>
     </div>
 
     <div class="section" style="padding:0;overflow:hidden">
       <div class="aave-hf-bar" style="background:${hfBg}">
         <span>🏦 AAVE V3 — Health Factor</span>
-        <span>${S.hf.toFixed(2)}${deribitWithdrawn > 0 ? ` <span style="font-size:10px;font-weight:400">(${S.hfNoTransfer.toFixed(2)} sans transferts)</span>` : ''}</span>
+        <span>${S.hf.toFixed(2)}</span>
       </div>
       <div style="padding:12px">
         <div style="display:flex;gap:12px">
           <div class="aave-col">
             <div class="card-label" style="margin-bottom:8px;color:var(--green)">✦ ACTIF</div>
-            <div class="aave-row"><span class="aave-row-icon">₿</span><span class="aave-row-val">${fmtBTC(S.btcCol)}</span></div>
-            <div style="font-size:9px;color:var(--muted);margin:-4px 0 4px 24px">P1: ${fmtBTC(S.p1Btc)} (constant) · P2: +${fmtBTC(S.p2Btc)}</div>
-            ${deribitWithdrawn > 0 ? `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(deribitWithdrawn)} <span class="card-sub">USDC (Deribit → AAVE)</span></span></div>
-            <div style="font-size:9px;color:var(--muted);margin:-4px 0 4px 24px">Gains shorts transférés cumulés</div>` : ''}
-            ${CFG.usdtCol > 0 ? `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(CFG.usdtCol)} <span class="card-sub">USDT init</span></span></div>` : ''}
+            <div class="aave-row"><span class="aave-row-icon">₿</span><span class="aave-row-val">${fmtBTC(S.totalWbtc)}</span></div>
+            <div style="font-size:9px;color:var(--muted);margin:-4px 0 4px 24px">Initial: ${fmtBTC(CFG.wbtcStart)} · Accumulé: +${fmtBTC(S.accumulatedBtc)}</div>
+            ${S.usdcAave > CFG.bufferUSDC ? `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(S.usdcAave)} <span class="card-sub">USDC</span></span></div>
+            <div style="font-size:9px;color:var(--muted);margin:-4px 0 4px 24px">Buffer: ${fmtUSD(CFG.bufferUSDC)} · Deribit→AAVE: +${fmtUSD(S.deribitWithdrawn)}</div>` : 
+            `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(CFG.bufferUSDC)} <span class="card-sub">USDC buffer</span></span></div>`}
             <div style="flex:1"></div>
-            <div class="aave-total"><div class="card-sub">Total</div><div style="font-weight:700">${fmtUSD(S.colUSD)}</div></div>
+            <div class="aave-total"><div class="card-sub">Total</div><div style="font-weight:700">${fmtUSD(S.totalCollateralUSD)}</div></div>
           </div>
           <div class="divider-v"></div>
           <div class="aave-col">
             <div class="card-label" style="margin-bottom:8px;color:var(--red)">✦ PASSIF</div>
-            ${S.p2Debt > 0 ? `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(S.p2Debt)} <span class="card-sub">P2 dette</span></span></div>` : ''}
-            ${CFG.debtUSDT > 0 ? `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(CFG.debtUSDT)} <span class="card-sub">USDT init</span></span></div>` : ''}
-            ${CFG.debtUSDC > 0 ? `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(CFG.debtUSDC)} <span class="card-sub">USDC init</span></span></div>` : ''}
+            ${CFG.existingDebt > 0 ? `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(CFG.existingDebt)} <span class="card-sub">Dette existante</span></span></div>` : ''}
+            ${S.p2Debt > 0 ? `<div class="aave-row"><span class="aave-row-icon">💵</span><span class="aave-row-val">${fmtUSD(S.p2Debt)} <span class="card-sub">Dette accumulation</span></span></div>` : ''}
             ${S.totalDebt === 0 ? `<div class="aave-row"><span class="aave-row-icon">✅</span><span class="aave-row-val" style="color:var(--green)">Aucune dette</span></div>` : ''}
             <div style="flex:1"></div>
             <div class="aave-total"><div class="card-sub">Total</div><div style="font-weight:700;color:var(--red)">${fmtUSD(S.totalDebt)}</div></div>
           </div>
         </div>
         <div class="aave-footer">
-          <span>LTV: ${S.ltv.toFixed(1)}%</span><span>Net: ${fmtUSD(S.aaveNet)}</span><span class="orange">Liq: ${fmtUSD(S.liq)}</span>
+          <span>LTV: ${S.ltv.toFixed(1)}%</span><span>Net: ${fmtUSD(S.aaveNet)}</span><span class="orange">Liq: ${fmtUSD(S.liqPrice)}</span>
         </div>
       </div>
     </div>
@@ -627,7 +593,7 @@ function sim(price) {
     <div class="section" style="padding:0;overflow:hidden">
       <div style="padding:8px 12px;background:rgba(96,165,250,0.12);display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:700">
         <span>📊 Deribit — Futures Hedge</span>
-        <span>${S.shortCount} short${S.shortCount !== 1 ? 's' : ''} · ${fmtBTC(S.shortBtc)}</span>
+        <span>${S.shortCount} short${S.shortCount !== 1 ? 's' : ''} · ${fmtBTC(S.shortCount * CFG.shortPerStep)}</span>
       </div>
       <div style="padding:12px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
@@ -644,43 +610,37 @@ function sim(price) {
             <div style="font-weight:700;margin-top:2px">${fmtUSD(S.deribitEquity)}</div>
           </div>
           <div style="padding:6px;text-align:center;background:var(--bg);border-radius:6px">
-            <div class="card-label">Marge req. (5%)</div>
-            <div style="font-weight:700;margin-top:2px">${fmtUSD(S.deribitIM)}</div>
+            <div class="card-label">Contango annuel</div>
+            <div style="font-weight:700;margin-top:2px;color:var(--green)">${fmtUSD(S.contangoYear)}</div>
           </div>
         </div>
-        ${S.needsTopup > 0 ? `<div style="margin-top:8px;padding:6px;background:rgba(248,113,113,0.1);border-radius:6px;font-size:11px;color:var(--red);text-align:center;font-weight:700">⚠️ Transférer ~${fmtUSD(S.needsTopup)} USDC AAVE → Deribit</div>` : ''}
-        ${S.transferable > 0 ? `<div style="margin-top:8px;padding:6px;background:rgba(110,231,160,0.1);border-radius:6px;font-size:11px;color:var(--green);text-align:center;font-weight:700">📊→🏦 ${fmtUSD(S.transferable)} USDC transférables vers AAVE</div>` : ''}
-        <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
-          <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:0.5px;margin-bottom:4px">Positions ouvertes</div>
-          ${posHTML}
-        </div>
-        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-          <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:0.5px;margin-bottom:4px">Ordres stop en attente</div>
-          ${ordersHTML || '<div style="font-size:11px;color:var(--muted);text-align:center;padding:4px">Aucun</div>'}
-        </div>
+        ${S.transferable > 100 ? `<div style="margin-top:8px;padding:6px;background:rgba(110,231,160,0.1);border-radius:6px;font-size:11px;color:var(--green);text-align:center;font-weight:700">📊→🏦 ${fmtUSD(S.transferable)} USDC transférables vers AAVE</div>` : ''}
       </div>
     </div>
 
-    ${S.contangoYear > 0 ? `<div class="section" style="text-align:center">
-      <h3>💰 Contango estimé (${CFG.contango}%/an)</h3>
-      <div class="card-value green">${fmtUSD(S.contangoYear)}/an</div>
-      <div class="card-sub">${fmtUSD(S.contangoMonth)}/mois sur ${fmtUSD(S.deribitNotional)} notionnel</div>
+    ${S.putsCostYear > 0 ? `<div class="section" style="text-align:center">
+      <h3>🛡️ Protection Puts OTM (${CFG.putCostPctYear}%/an)</h3>
+      <div class="card-value orange">${fmtUSD(S.putsCostYear)}/an</div>
+      <div class="card-sub">Protection sur ${fmtBTC(S.totalWbtc)} accumulé</div>
     </div>` : ''}
 
-    <div class="section" style="text-align:center">
-      <h3>🎯 Collatéral @ ATH (${fmtUSD(CFG.ATH)})</h3>
-      <div class="card-value green" style="font-size:24px">${fmtBTC(totalBtcATH)}</div>
-      <div class="card-sub" style="font-size:13px;margin-top:4px">${fmtUSD(totalBtcATH * CFG.ATH)} · 100% BTC</div>
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);display:flex;justify-content:space-around;flex-wrap:wrap;gap:4px">
-        <span>P1: ${fmtBTC(CFG.wbtc)}</span>
-        <span class="green">P2: +${fmtBTC(p2Profit / CFG.ATH)}</span>
-        ${deribitWithdrawn > 0 ? `<span class="green">USDC: +${fmtBTC(deribitWithdrawn / CFG.ATH)}</span>` : ''}
-        <span class="${deribitEquityATHproj >= 0 ? 'green' : 'red'}">Deribit: ${fmtBTC(deribitEquityATHproj / CFG.ATH)}</span>
-        ${CFG.ret > 0 ? `<span class="red">−${fmtBTC(CFG.ret)}</span>` : ''}
+    <div class="section">
+      <h3>📊 Répartition Live (79/18/3)</h3>
+      <div style="font-size:11px;line-height:1.8">
+        <div style="display:flex;justify-content:space-between;">
+          <span>🪙 WBTC AAVE:</span>
+          <span><strong>${fmtUSD(S.totalWbtc * price)}</strong> (${((S.totalWbtc * price) / S.totalCollateralUSD * 100).toFixed(1)}%)</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span>💵 USDC AAVE:</span>
+          <span><strong>${fmtUSD(S.usdcAave)}</strong> (${(S.usdcAave / S.totalCollateralUSD * 100).toFixed(1)}%)</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span>📊 USDC Deribit:</span>
+          <span><strong>${fmtUSD(S.deribitEquity)}</strong> (${(S.deribitEquity / S.totalCollateralUSD * 100).toFixed(1)}%)</span>
+        </div>
       </div>
     </div>
-
-    <div class="section"><h3>🎯 Prochaines actions</h3>${nextHTML}</div>
 
     ${actions.length ? `<div class="section" style="border:1px solid var(--accent);background:rgba(246,176,107,0.05)">
       <h3 style="color:var(--accent)">⚖️ Actions requises</h3>
@@ -714,8 +674,7 @@ function sim(price) {
   if (actions.length) {
     const dir = cur > prevStep ? 'down' : 'up';
     log.unshift({ price, from: prevStep, to: cur, dir, actions,
-      snap: { hf: S.hf.toFixed(2), col: fmtUSD(S.colUSD), debt: fmtUSD(S.totalDebt),
-              deribit: fmtUSD(S.deribitEquity), contango: fmtUSD(S.contangoYear), portfolio: fmtUSD(S.portfolio) } });
+      snap: { hf: S.hf.toFixed(2), portfolio: fmtUSD(S.portfolio) } });
     renderLog();
   }
   prevStep = cur;
