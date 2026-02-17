@@ -1,0 +1,14 @@
+[Unit]
+Description=Hedge Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=xou
+WorkingDirectory=/home/xou/hedge-dashboard
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

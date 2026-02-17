@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>BTSAVE — Connexion</title>
+<style>
+  :root {
+    --bg: #121016; --card: #1a171f; --border: #2a2530;
+    --text: #e8e4ed; --muted: #7a7285; --accent: #f6b06b;
+    --green: #6ee7a0; --red: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .login-container { text-align: center; padding: 40px 32px; max-width: 380px; width: 90%; }
+  .logo-wrap { margin-bottom: 40px; }
+  .logo-wrap img { height: 48px; }
+  .tagline { color: var(--muted); font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; margin-top: 10px; }
+  .login-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px 24px; }
+  .field { margin-bottom: 16px; text-align: left; }
+  .field label { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+  .field input {
+    width: 100%; padding: 12px 14px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text); font-size: 15px; font-family: inherit;
+    outline: none; transition: border-color 0.2s;
+  }
+  .field input:focus { border-color: var(--accent); }
+  .submit-btn {
+    width: 100%; padding: 14px; background: linear-gradient(135deg, var(--accent), #e09555);
+    color: #1a1a1a; border: none; border-radius: 12px; font-size: 15px; font-weight: 700;
+    font-family: inherit; cursor: pointer; transition: all 0.2s; margin-top: 8px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .submit-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+  .submit-btn:active { transform: translateY(0); }
+  .error-msg {
+    background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.2);
+    color: var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px;
+    margin-bottom: 16px; display: none;
+  }
+  .glow { position: fixed; width: 300px; height: 300px; border-radius: 50%; filter: blur(100px); opacity: 0.06; pointer-events: none; }
+  .glow-1 { top: -100px; left: -50px; background: var(--accent); }
+  .glow-2 { bottom: -100px; right: -50px; background: var(--green); }
+</style>
+</head>
+<body>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+
+<div class="login-container">
+  <div class="logo-wrap">
+    <img src="logo.svg" alt="BTSAVE">
+    <div class="tagline">On-chain hedge monitor</div>
+  </div>
+
+  <div class="login-card">
+    <div class="error-msg" id="error">Identifiants incorrects</div>
+
+    <form method="POST" action="auth/login">
+      <div class="field">
+        <label>Identifiant</label>
+        <input type="text" name="username" autocomplete="username" autofocus required>
+      </div>
+      <div class="field">
+        <label>Mot de passe</label>
+        <input type="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="submit-btn">Se connecter</button>
+    </form>
+  </div>
+</div>
+
+<script>
+  if (new URLSearchParams(location.search).has('error')) {
+    document.getElementById('error').style.display = 'block';
+  }
+</script>
+</body>
+</html>

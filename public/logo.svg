@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 110" height="110">
+  <text x="0" y="100" fill="#f6b06b" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="100">₿</text>
+  <text x="66" y="100" fill="#6ee7a0" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="100">T</text>
+  <ellipse cx="96" cy="60" rx="28.799999999999997" ry="8.5" fill="none" stroke="#6ee7a0" stroke-width="5"/>
+  <text x="132" y="100" fill="#6ee7a0" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="100">$</text>
+  <path d="M198,100 L228,28 L258,100" fill="none" stroke="#6ee7a0" stroke-width="14" stroke-linejoin="miter" stroke-linecap="square"/>
+  <text x="264" y="100" fill="#f87171" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="100">V</text>
+  <text x="330" y="100" fill="#f87171" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif" font-weight="900" font-size="100">€</text>
+</svg>

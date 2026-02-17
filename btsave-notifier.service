@@ -1,0 +1,31 @@
+[Unit]
+Description=BTSAVE BTC Price Notifier
+Documentation=man:node(1)
+After=network.target
+
+[Service]
+Type=simple
+User=xou
+WorkingDirectory=/home/xou/hedge-dashboard
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node notifier.js
+Restart=always
+RestartSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btsave-notifier
+
+# Security (optional hardening)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/xou/hedge-dashboard
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
