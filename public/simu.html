@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>BTSAVE — Simulation</title>
+<link rel="stylesheet" href="simu.css">
+<style>.tc{padding:5px 2px;text-align:center}.b{font-weight:700}.muted{color:var(--muted)}</style>
+</head>
+<body>
+<div class="container" id="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-top">
+      <div>
+        <img src="logo.svg" alt="BTSAVE" style="height:30px">
+        <div class="nav-toggle">
+          <a href="/" class="nav-btn">PROD</a>
+          <a href="/simu.html" class="nav-btn active">SIMU</a>
+        </div>
+      </div>
+      <div style="text-align:right"><div class="step-badge" id="badge-step">CONFIG</div></div>
+    </div>
+    <div id="header-price" style="display:none;text-align:center;margin:10px 0 6px">
+      <div class="price-big" id="hdr-price">—</div>
+      <div style="color:var(--red);font-size:15px;font-weight:700" id="hdr-pct"></div>
+    </div>
+    <div class="header-stats" id="header-stats" style="display:none">
+      <div class="header-stat"><div class="header-stat-value" id="hdr-steps">0</div><div class="header-stat-label">Paliers franchis</div></div>
+      <div class="header-stat"><div class="header-stat-value" id="hdr-ath">—</div><div class="header-stat-label">ATH Réf.</div></div>
+      <div class="header-stat"><div class="header-stat-value" id="hdr-pas">—</div><div class="header-stat-label">Pas (5%)</div></div>
+    </div>
+  </div>
+
+  <!-- CONFIG -->
+  <div id="phase-config">
+    <div class="section">
+      <h3>⚙️ Paramètres initiaux</h3>
+      <div class="config-form">
+        <div class="config-field"><label>ATH ($)</label><input type="number" id="cfg-ath" value="126000"></div>
+        <div class="config-field"><label>Seuil liq. (%)</label><input type="number" id="cfg-liq" value="78"></div>
+        <div class="config-field"><label>BTC Collatéral</label><input type="number" id="cfg-wbtc" value="2" step="0.0001"></div>
+        <div class="config-field"><label>USDT Collatéral</label><input type="number" id="cfg-usdt-col" value="0"></div>
+        <div class="config-field"><label>Dette USDT</label><input type="number" id="cfg-debt-usdt" value="0"></div>
+        <div class="config-field"><label>Dette USDC</label><input type="number" id="cfg-debt-usdc" value="0"></div>
+        <div class="config-field"><label>BTC par palier</label><input type="number" id="cfg-btc-step" value="" disabled style="color:var(--muted)"></div>
+        <div class="config-field"><label>BTC à rembourser</label><input type="number" id="cfg-btc-return" value="0"></div>
+        <div class="config-field"><label>Marge Deribit (USDC)</label><input type="number" id="cfg-deribit-margin" value="5000"></div>
+        <div class="config-field"><label>Contango (%/an)</label><input type="number" id="cfg-contango" value="10" step="1"></div>
+        <div class="config-field"><label>Durée cycle (jours)</label><input type="number" id="cfg-cycle-days" value="180" step="1"></div>
+      </div>
+      <button class="btn-launch go" onclick="launch()">🚀 LANCER SIMULATION</button>
+    </div>
+  </div>
+
+  <!-- SIMULATION -->
+  <div id="phase-sim" style="display:none">
+    <div class="price-input-wrap">
+      <label>Prix BTC simulé</label>
+      <div class="price-input-row">
+        <input type="number" id="price-input" step="100" placeholder="126000" style="flex:1">
+        <button class="btn-go" onclick="go()">GO</button>
+      </div>
+    </div>
+    <button class="btn-launch reset" onclick="resetSim()">↺ Reset — Retour config</button>
+    <div id="sim-dashboard" style="margin-top:12px"></div>
+    <div class="section" id="log-section" style="display:none">
+      <h3>📜 Journal des actions</h3>
+      <div id="action-log"></div>
+    </div>
+  </div>
+
+  <div class="footer">BTSAVE — Simulation client-side</div>
+</div>
+<script src="simu.js"></script>
+</body>
+</html>
