@@ -18,8 +18,8 @@ async function sendAllTests() {
     // Wait 2 seconds between tests
     await new Promise(resolve => setTimeout(resolve, 2000));
     
-    console.log('2. ⚠️  Test zone critique (-12.3% - Zone1)');
-    console.log('   Prix: $110,484 - Entrée en zone critique avec vente puts');
+    console.log('2. ⚠️  Test palier baisse profond (Step 3 - Accumulation + HF check)');
+    console.log('   Prix: $107,100 - Palier 3 franchi, vérifier Health Factor');
     await sendTestNotification('critical_zone');
     console.log('   ✅ Envoyé!\n');
     

@@ -401,13 +401,11 @@ function calculateCurrentStep(price) {
 }
 
 function getCurrentZone(price) {
-  const pctFromATH = ((price - athTracked) / athTracked) * 100;
-  
-  if (pctFromATH > -12.3) return 'accumulation';
-  else if (pctFromATH <= -12.3 && pctFromATH > -17.6) return 'zone1';
-  else if (pctFromATH <= -17.6 && pctFromATH > -21) return 'zone2'; 
-  else if (pctFromATH <= -21 && pctFromATH > -26) return 'stop';
-  else return 'emergency';
+  // Finale Ultime: zones are HF-based, but notifier uses price as proxy
+  // since we don't have real-time HF here. Zone mapping is approximate.
+  // Real HF-based decisions are made on the dashboard/manual level.
+  // For notification purposes, we just track step crossings.
+  return 'accumulation'; // All steps are accumulation — HF governs actions, not price
 }
 
 // === NOTIFICATION DATA PREPARATION ===
@@ -416,38 +414,10 @@ function buildStepNotificationData(price, step, direction, zone) {
   
   let zoneDisplay, autoActions, manualActions;
   
-  // Zone-specific content
-  switch(zone) {
-    case 'accumulation':
-      zoneDisplay = '🟢 ACCUMULATION';
-      autoActions = '· Stop Market SELL ' + SHORT_PER_STEP + ' BTC\n· Funding accrual normal';
-      manualActions = '· Borrow ' + fmt(BORROW_PER_STEP) + ' USDC AAVE\n· DeFiLlama swap → WBTC\n· Déposer aEthWBTC';
-      break;
-      
-    case 'zone1':
-      zoneDisplay = '🟡 ZONE1 (-12.3%)';
-      autoActions = '· Stop nouveaux shorts\n· AAVE: Pause emprunts';
-      manualActions = '· Vendre 50% des PUT Deribit\n· Rembourser 25% dette AAVE\n· Réduire exposition leverage';
-      break;
-      
-    case 'zone2':
-      zoneDisplay = '🟠 ZONE2 (-17.6%)';
-      autoActions = '· Stop complet positions\n· Alerte risque élevé';
-      manualActions = '· Vendre PUT restants\n· Rembourser 40% dette\n· Préparer liquidation partielle';
-      break;
-      
-    case 'stop':
-      zoneDisplay = '🔴 STOP (-21%)';
-      autoActions = '· ⛔ STOP tous emprunts\n· 🚨 Mode survie activé';
-      manualActions = '· ⛔ STOP tous emprunts\n· Fermer positions risquées\n· Préserver capital restant';
-      break;
-      
-    case 'emergency':
-      zoneDisplay = '⛔ EMERGENCY (-26%)';
-      autoActions = '· 🚨 LIQUIDATION PARTIELLE\n· 📞 ALERTE ÉQUIPE';
-      manualActions = '· 🚨 VENDRE TOUS les PUT\n· 🚨 Rembourser max dette\n· 🆘 Contact risk mgmt';
-      break;
-  }
+  // Finale Ultime: all steps are accumulation (HF governs actions, not price)
+  zoneDisplay = '🟢 ACCUMULATION';
+  autoActions = '· Stop Market SELL ' + SHORT_PER_STEP + ' BTC\n· Funding accrual normal';
+  manualActions = '· Borrow ' + fmt(BORROW_PER_STEP) + ' USDC AAVE\n· DeFiLlama swap → WBTC\n· Déposer aEthWBTC\n· Vérifier Health Factor AAVE';
   
   return {
     price,
@@ -589,18 +559,18 @@ async function sendTestNotifications() {
       zone: 'accumulation'
     },
     {
-      name: 'Zone1 - Critical (-12.3%)',
-      price: 110502,
+      name: 'Step 3 - Accumulation (HF check)',
+      price: 107100,
       step: 3,
       direction: 'down',
-      zone: 'zone1'
+      zone: 'accumulation'
     },
     {
-      name: 'Zone2 - Danger (-17.6%)',
-      price: 103824,
+      name: 'Step 5 - Deep Accumulation',
+      price: 94500,
       step: 5,
       direction: 'down',
-      zone: 'zone2'
+      zone: 'accumulation'
     },
     {
       name: 'Recovery - Step 1',
