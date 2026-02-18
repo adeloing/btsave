@@ -17,11 +17,13 @@ const DERIBIT_FEE = 0.0005; // 0.05% taker (stop orders)
 let crossings = 0, roundTrips = 0;
 let log = [], savedConfigHTML = '';
 
-// Management zones thresholds (%)
-const ZONE1_THRESHOLD = -12.3;  // -12.3%
-const ZONE2_THRESHOLD = -17.6;  // -17.6% 
-const STOP_THRESHOLD = -21.0;   // -21%
-const EMERGENCY_THRESHOLD = -26.0; // -26%
+// Health Factor thresholds (Finale Ultime strategy)
+const HF_ACCUMULATION_MIN = 1.50;  // Normal accumulation when HF >= 1.50
+const HF_MONITOR = 1.40;           // Monitor reinforced but still allowed to borrow
+const HF_STOP_BORROW = 1.40;       // Stop all new borrowing when HF < 1.40
+const HF_PUTS_50_SELL = 1.30;      // Sell 50% puts + repay 25% debt at HF 1.30
+const HF_PUTS_REMAINING = 1.25;    // Sell remaining puts + repay 40% debt at HF 1.25  
+const HF_EMERGENCY = 1.15;         // Sell everything + repay max debt when HF < 1.15
 
 // Puts tracking
 let putsPortfolio = { bought: 0, cost: 0, sold: 0, pnl: 0 }; // tracks puts positions
@@ -45,14 +47,39 @@ document.addEventListener('DOMContentLoaded', () => {
   $('cfg-wbtc-start').addEventListener('input', updateCalcs);
 });
 
-// §MANAGEMENT-ZONES
-function getManagementZone(price, ath) {
-  const pct = ((price - ath) / ath) * 100;
+// §TEMP-STATE-CALC (for HF-based decision making)
+function calcTempState(price, stepIndex) {
+  // Calculate what HF would be if we borrow at this step
+  let accumulatedBtc = 0;
+  for (let i = 1; i <= Math.max(maxStep, stepIndex); i++) {
+    if (firstCrossed[i] || i === stepIndex) {
+      accumulatedBtc += CFG.shortPerStep;
+    }
+  }
+  const totalWbtc = CFG.wbtcStart + accumulatedBtc;
+  const usdcAave = CFG.bufferUSDC + deribitWithdrawn;
   
-  if (pct <= EMERGENCY_THRESHOLD) return 'emergency';
-  if (pct <= STOP_THRESHOLD) return 'stop';
-  if (pct <= ZONE2_THRESHOLD) return 'zone2';
-  if (pct <= ZONE1_THRESHOLD) return 'zone1';
+  let p2Debt = 0;
+  for (let i = 1; i <= Math.max(maxStep, stepIndex); i++) {
+    if (firstCrossed[i] || i === stepIndex) {
+      p2Debt += CFG.borrowPerStep;
+    }
+  }
+  const totalDebt = CFG.existingDebt + p2Debt;
+  
+  const totalCollateralUSD = (totalWbtc * price) + usdcAave;
+  const hf = totalDebt > 0 ? (totalCollateralUSD * 0.78) / totalDebt : 99;
+  
+  return { hf, totalWbtc, totalDebt, totalCollateralUSD };
+}
+
+// §MANAGEMENT-ZONES (Health Factor based)
+function getManagementZone(healthFactor) {
+  if (healthFactor < HF_EMERGENCY) return 'emergency';
+  if (healthFactor < HF_PUTS_REMAINING) return 'zone2';
+  if (healthFactor < HF_PUTS_50_SELL) return 'zone1';
+  if (healthFactor < HF_STOP_BORROW) return 'stop';
+  if (healthFactor < HF_ACCUMULATION_MIN) return 'monitor';
   return 'accumulation';
 }
 
@@ -69,11 +96,12 @@ function getZoneColor(zone) {
 
 function getZoneLabel(zone) {
   const labels = {
-    accumulation: 'ACCUMULATION',
-    zone1: 'ZONE 1 (-12.3%)',
-    zone2: 'ZONE 2 (-17.6%)', 
-    stop: 'STOP (-21%)',
-    emergency: 'EMERGENCY (-26%)'
+    accumulation: 'ACCUMULATION (HF≥1.50)',
+    monitor: 'MONITOR (HF 1.40-1.50)',
+    stop: 'STOP BORROW (HF<1.40)',
+    zone1: 'ZONE 1 (HF 1.30)', 
+    zone2: 'ZONE 2 (HF 1.25)',
+    emergency: 'EMERGENCY (HF<1.15)'
   };
   return labels[zone] || 'ACCUMULATION';
 }
@@ -119,14 +147,10 @@ function launch() {
   // Grid table — step prices and accumulation amounts
   let rows = stepPrices.map((p, i) => {
     if (i === 0) {
-      return `<tr style="border-bottom:1px solid var(--border)"><td class="tc b" style="color:var(--accent)">ATH</td><td class="tc b">${fmtUSD(p)}</td><td class="tc muted">—</td><td class="tc muted">—</td></tr>`;
+      return `<tr style="border-bottom:1px solid var(--border)"><td class="tc b" style="color:var(--accent)">ATH</td><td class="tc b">${fmtUSD(p)}</td><td class="tc muted">—</td><td class="tc muted">Gestion par HF</td></tr>`;
     }
     
-    const zone = getManagementZone(p, CFG.ATH);
-    const zoneColor = getZoneColor(zone);
-    const zoneStyle = zone !== 'accumulation' ? `style="color:${zoneColor}"` : '';
-    
-    return `<tr style="border-bottom:1px solid var(--border)" id="sr-${i}"><td class="tc b">${i}</td><td class="tc b">${fmtUSD(p)}</td><td class="tc">${fmtBTC(CFG.shortPerStep)}</td><td class="tc" ${zoneStyle}>${getZoneLabel(zone)}</td></tr>`;
+    return `<tr style="border-bottom:1px solid var(--border)" id="sr-${i}"><td class="tc b">${i}</td><td class="tc b">${fmtUSD(p)}</td><td class="tc">${fmtBTC(CFG.shortPerStep)}</td><td class="tc muted">Auto (HF)</td></tr>`;
   }).join('');
 
   $('phase-config').innerHTML = `
@@ -187,8 +211,7 @@ function go() { const v = +$('price-input').value; if (v > 0) sim(v); }
 
 // §CALC — compute full state for a given step position
 function calcState(price, cur) {
-  // Current zone
-  const currentZone = getManagementZone(price, CFG.ATH);
+  // First calculate HF to determine current zone
   
   // ═══ WBTC Collateral (79% initially + accumulated) ═══
   let accumulatedBtc = 0;
@@ -236,6 +259,9 @@ function calcState(price, cur) {
   const ltv = totalCollateralUSD > 0 ? totalDebt / totalCollateralUSD * 100 : 0;
   const liqPrice = totalWbtc > 0 ? (totalDebt / 0.78 - usdcAave) / totalWbtc : 0;
   const aaveNet = totalCollateralUSD - totalDebt;
+
+  // Current zone based on Health Factor
+  const currentZone = getManagementZone(hf);
 
   // ═══ Portfolio Total ═══
   const portfolio = totalCollateralUSD - totalDebt + deribitEquity;
@@ -395,26 +421,30 @@ function sim(price) {
   for (let i = 1; i <= 19; i++) if (price <= stepPrices[i]) cur = i;
   if (cur > maxStep) maxStep = cur;
 
-  // §STEP-CHANGES — actions selon la zone de gestion
+  // §STEP-CHANGES — actions selon la zone de gestion HF
   let actions = [];
-  const currentZone = getManagementZone(price, CFG.ATH);
 
   if (prevStep !== null && cur !== prevStep) {
     crossings += Math.abs(cur - prevStep);
 
     if (cur > prevStep) {
-      // ═══ GOING DOWN ═══
+      // ═══ GOING DOWN ═══ 
       for (let i = prevStep + 1; i <= cur; i++) {
         const triggerPrice = stepPrices[i];
-        const zone = getManagementZone(triggerPrice, CFG.ATH);
         const notional = CFG.shortPerStep * triggerPrice;
         const fee = notional * DERIBIT_FEE;
         const marginReq = notional * 0.05;
         deribitFees += fee;
         deribitRealizedPnL -= fee;
 
-        // Check if we should stop borrowing (stop/emergency zones)
-        const shouldBorrow = zone === 'accumulation' || zone === 'zone1' || zone === 'zone2';
+        // Calculate state after this step to get HF for decision making
+        const tempState = calcTempState(triggerPrice, i);
+        const zone = getManagementZone(tempState.hf);
+        
+        // New Finale Ultime rules: 
+        // - Borrow as long as HF >= 1.40 (accumulation + monitor zones)
+        // - Stop borrowing when HF < 1.40
+        const shouldBorrow = tempState.hf >= HF_STOP_BORROW;
 
         if (!firstCrossed[i]) {
           firstCrossed[i] = true;
@@ -438,21 +468,29 @@ function sim(price) {
             );
           }
 
-          // Zone-specific management actions
+          // HF-based management actions (Finale Ultime)
           if (zone === 'zone1') {
             steps.push(
-              { icon: '🎯', text: `ZONE 1`, highlight: 'var(--orange)', section: true },
-              { icon: '📝', text: `Vendre 50% des puts → rembourser 25% dette`, badge: 'manuel', highlight: 'var(--orange)' }
+              { icon: '🎯', text: `HF 1.30 - PUTS MONÉTISATION 50%`, highlight: 'var(--orange)', section: true },
+              { icon: '📝', text: `Vendre 50% puts → rembourser 25% dette`, badge: 'manuel', highlight: 'var(--orange)' }
             );
           } else if (zone === 'zone2') {
             steps.push(
-              { icon: '🎯', text: `ZONE 2`, highlight: 'var(--red)', section: true },
+              { icon: '🎯', text: `HF 1.25 - PUTS MONÉTISATION TOTALE`, highlight: 'var(--red)', section: true },
               { icon: '📝', text: `Vendre puts restants → rembourser 40% dette restante`, badge: 'manuel', highlight: 'var(--red)' }
             );
           } else if (zone === 'emergency') {
             steps.push(
-              { icon: '🚨', text: `EMERGENCY`, highlight: '#dc2626', section: true },
+              { icon: '🚨', text: `HF < 1.15 - EMERGENCY`, highlight: '#dc2626', section: true },
               { icon: '📝', text: `Vendre tous puts + rembourser maximum de dette`, badge: 'manuel', highlight: '#dc2626' }
+            );
+          } else if (zone === 'stop') {
+            steps.push(
+              { icon: '⛔', text: `HF < 1.40 - STOP EMPRUNTS`, highlight: 'var(--red)', section: true }
+            );
+          } else if (zone === 'monitor') {
+            steps.push(
+              { icon: '👁️', text: `HF 1.40-1.50 - MONITOR RENFORCÉ`, highlight: 'var(--orange)', section: true }
             );
           }
 
@@ -525,6 +563,7 @@ function sim(price) {
   // §STATE-CALC
   const S = calcState(price, cur);
   const pct = ((price - CFG.ATH) / CFG.ATH * 100).toFixed(1);
+  const currentZone = S.currentZone;
 
   // §HEADER
   $('hdr-price').textContent = fmtUSD(price);
