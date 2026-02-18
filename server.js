@@ -352,13 +352,15 @@ async function fetchAllData() {
   }
   gridGains.totalPnl = +gridGains.totalPnl.toFixed(2);
 
-  // Determine current zone for règles de gestion
+  // Determine current zone based on Health Factor (Finale Ultime)
   const pctFromATH = ((price - ATH) / ATH) * 100;
+  const hfZone = aave ? aave.healthFactor : 99;
   let currentZone = 'accumulation';
-  if (pctFromATH > -12.3) currentZone = 'accumulation';
-  else if (pctFromATH > -17.6) currentZone = 'zone1';
-  else if (pctFromATH > -21) currentZone = 'zone2';
-  else if (pctFromATH > -26) currentZone = 'stop';
+  if (hfZone >= 1.50) currentZone = 'accumulation';
+  else if (hfZone >= 1.40) currentZone = 'monitor';
+  else if (hfZone >= 1.30) currentZone = 'stop';
+  else if (hfZone >= 1.25) currentZone = 'zone1';
+  else if (hfZone >= 1.15) currentZone = 'zone2';
   else currentZone = 'emergency';
 
   // Compute next step above and below current price
@@ -400,34 +402,34 @@ async function fetchAllData() {
     nextActions.warnings.push('Stratégie prise en cours de route — règles de zone adaptées à l\'état réel');
   }
 
-  // Actions based on real HF and position state
-  if (hf < 1.3) {
-    nextActions.actions.push('🚨 HF CRITIQUE (' + hf.toFixed(2) + ') — rembourser dette immédiatement');
-    if (hasPuts) nextActions.actions.push('Vendre puts pour libérer du cash');
-    nextActions.actions.push('Utiliser buffer USDC ($' + Math.round(usdcAvailable).toLocaleString('fr-FR') + ') pour rembourser');
-  } else if (hf < 1.5) {
-    nextActions.actions.push('⚠️ HF bas (' + hf.toFixed(2) + ') — surveiller de près');
-    nextActions.actions.push('Préparer remboursement partiel si dégradation');
+  // Actions based on Health Factor (Finale Ultime - HF Only)
+  if (hf < 1.15) {
+    nextActions.actions.push('🚨 HF CRITIQUE (' + hf.toFixed(2) + ') — Position ultra-défensive');
+    if (hasPuts) nextActions.actions.push('Vendre TOUS puts restants');
+    nextActions.actions.push('Rembourser le maximum possible de dette');
     nextActions.actions.push('AUCUN nouvel emprunt');
-  } else if (hf >= 2.0) {
-    // HF healthy — standard operations
-    nextActions.actions.push('HF sain — pas d\'action urgente');
-
-    // If price is in accumulation zone theoretically
-    if (currentZone === 'accumulation') {
-      nextActions.actions.push('Accumuler: emprunter ' + BORROW_PER_STEP + ' USDC → swap WBTC');
-      nextActions.actions.push('Short: ' + SHORT_PER_STEP + ' BTC au prochain palier');
-    } else {
-      // Below accumulation but HF is fine — monitor mode
-      nextActions.actions.push('AUCUN nouvel emprunt (prix sous zone accumulation)');
-      nextActions.actions.push('Sell stops en place pour shorter si descente continue');
-      if (hasPuts) nextActions.actions.push('Conserver puts (protection active)');
-    }
+  } else if (hf < 1.25) {
+    nextActions.actions.push('🔶 HF ' + hf.toFixed(2) + ' — Vendre puts restants + rembourser 40% dette');
+    if (hasPuts) nextActions.actions.push('Vendre 50% puts restants → repay 40% dette');
+    nextActions.actions.push('AUCUN nouvel emprunt');
+  } else if (hf < 1.30) {
+    nextActions.actions.push('⚠️ HF ' + hf.toFixed(2) + ' — Vendre 50% puts + rembourser 25% dette');
+    if (hasPuts) nextActions.actions.push('Vendre 50% des puts → repay 25% dette');
+    nextActions.actions.push('AUCUN nouvel emprunt');
+  } else if (hf < 1.40) {
+    nextActions.actions.push('🛑 HF ' + hf.toFixed(2) + ' — STOP total nouveaux emprunts');
+    nextActions.actions.push('Mode protection / monétisation puts');
+    if (hasPuts) nextActions.actions.push('Conserver puts (protection active)');
+  } else if (hf < 1.50) {
+    nextActions.actions.push('👁️ HF ' + hf.toFixed(2) + ' — Monitor renforcé');
+    nextActions.actions.push('Emprunts toujours autorisés');
+    nextActions.actions.push('Accumuler: emprunter ' + BORROW_PER_STEP + ' USDC → swap WBTC');
   } else {
-    // HF between 1.5-2.0
-    nextActions.actions.push('HF correct (' + hf.toFixed(2) + ') — mode surveillance');
-    nextActions.actions.push('AUCUN nouvel emprunt');
-    if (hasPuts) nextActions.actions.push('Surveiller puts — vendre si HF descend sous 1.5');
+    // HF >= 1.50 — Accumulation normale
+    nextActions.actions.push('✅ HF sain (' + hf.toFixed(2) + ') — Accumulation normale');
+    nextActions.actions.push('Accumuler: emprunter ' + BORROW_PER_STEP + ' USDC → swap WBTC');
+    nextActions.actions.push('Short: ' + SHORT_PER_STEP + ' BTC au prochain palier');
+    if (hasPuts) nextActions.actions.push('Puts actifs — protection en place');
   }
 
   // Directional actions
