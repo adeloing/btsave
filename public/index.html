@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>BTSAVE Hybrid</title>
+<title>BTSAVE Finale Ultime</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
@@ -124,12 +124,14 @@ function render(d) {
   const ltvPct = a ? (a.totalDebtUSD / a.totalCollateralUSD * 100).toFixed(1) : '—';
 
   // Zone thresholds
+  // Health Factor based zones (new Finale Ultime strategy)
   const zones = [
-    { id: 'accumulation', label: '✅ Accumulation normale', condition: 'Au-dessus ATH −12.3%', price: fmtUSD(d.ATH * 0.877) },
-    { id: 'zone1', label: '⚠️ Vendre 50% puts + rembourser 25% dette', condition: 'ATH −12.3% à −17.6%', price: fmtUSD(d.ATH * 0.877) + ' → ' + fmtUSD(d.ATH * 0.824) },
-    { id: 'zone2', label: '🔶 Vendre puts restants + rembourser 40% dette', condition: 'ATH −17.6% à −21%', price: fmtUSD(d.ATH * 0.824) + ' → ' + fmtUSD(d.ATH * 0.79) },
-    { id: 'stop', label: '🛑 STOP emprunts', condition: 'ATH −21% à −26%', price: fmtUSD(d.ATH * 0.79) + ' → ' + fmtUSD(d.ATH * 0.74) },
-    { id: 'emergency', label: '🚨 Vendre tout + rembourser max', condition: 'Sous ATH −26%', price: fmtUSD(d.ATH * 0.74) },
+    { id: 'accumulation', label: '✅ Accumulation normale', condition: 'HF ≥ 1.50', hf: '1.50+' },
+    { id: 'monitor', label: '👁️ Monitor renforcé', condition: 'HF 1.40 à 1.50', hf: '1.40-1.50' },
+    { id: 'stop', label: '🛑 STOP nouveaux emprunts', condition: 'HF < 1.40', hf: '<1.40' },
+    { id: 'zone1', label: '⚠️ Vendre 50% puts + rembourser 25% dette', condition: 'HF 1.30', hf: '1.30' },
+    { id: 'zone2', label: '🔶 Vendre puts restants + rembourser 40% dette', condition: 'HF 1.25', hf: '1.25' },
+    { id: 'emergency', label: '🚨 Vendre tout + rembourser max', condition: 'HF < 1.15', hf: '<1.15' },
   ];
 
   $('#app').innerHTML = `
@@ -398,14 +400,14 @@ function render(d) {
     </div>
     ` : ''}
 
-    <!-- Règles de gestion -->
+    <!-- Règles de gestion HF -->
     <div class="section">
-      <h3>📋 Règles de gestion</h3>
+      <h3>📋 Règles de gestion par Health Factor</h3>
       ${zones.map(z => `
         <div class="zone-item ${d.currentZone === z.id ? 'active' : ''}">
           <div style="display:flex;justify-content:space-between">
             <span>${z.label}</span>
-            <span class="zone-price">${z.price}</span>
+            <span class="zone-price" style="color:var(--accent)">HF ${z.hf}</span>
           </div>
           <div style="font-size:10px;color:var(--muted)">${z.condition}</div>
         </div>
@@ -414,7 +416,8 @@ function render(d) {
     
     <div class="footer">
       <span class="live-dot"></span> Mis à jour: ${new Date().toLocaleString('fr-FR')} — Auto-refresh 60s<br>
-      Hybrid ZERO-LIQ — On-chain + Deribit
+      Finale Ultime - Répartition 79/18/3 - HF Only - Puts Auto - L1 ETH<br>
+      <span style="font-size: 9px; opacity: 0.7;">Version verrouillée le 18 février 2026</span>
     </div>
   `;
   
