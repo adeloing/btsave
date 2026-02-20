@@ -59,6 +59,7 @@ const AWBTC = '0x5Ee5bf7ae06D1Be5997A1A72006FE6C607eC6DE8';
 const AUSDT = '0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a';
 const DEBT_USDT = '0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8';
 const AUSDC = '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c';
+const DEBT_USDC = '0x72E95b8931767C79bA4EeE721354d6E99a61D004';
 
 // === Strategy constants ===
 const ATH = 126000;
@@ -147,6 +148,7 @@ async function fetchAAVE() {
       { to: AUSDT, data: balOf },
       { to: DEBT_USDT, data: balOf },
       { to: AUSDC, data: balOf },
+      { to: DEBT_USDC, data: balOf },
     ]);
 
     results.sort((a, b) => a.id - b.id);
@@ -166,6 +168,7 @@ async function fetchAAVE() {
       usdtCol: Number(toBig(results[2].result)) / 1e6,
       debtUSDT: Number(toBig(results[3].result)) / 1e6,
       usdcCol: Number(toBig(results[4].result)) / 1e6,
+      debtUSDC: Number(toBig(results[5].result)) / 1e6,
     };
   } catch (e) {
     console.error('AAVE fetch error:', e.message);
@@ -249,11 +252,12 @@ app.use(express.static('public'));
 async function fetchAllData() {
   const token = await getDeribitToken();
 
-  const [ticker, account, ordersRes, posRes, tradesRes, aave, historyPrices, ethInfo] = await Promise.all([
+  const [ticker, account, ordersRes, posRes, posResBTC, tradesRes, aave, historyPrices, ethInfo] = await Promise.all([
     deribit('public/ticker', { instrument_name: 'BTC_USDC-PERPETUAL' }, token),
     deribit('private/get_account_summary', { currency: 'USDC' }, token),
     deribit('private/get_open_orders_by_currency', { currency: 'USDC' }, token),
     deribit('private/get_positions', { currency: 'USDC' }, token),
+    deribit('private/get_positions', { currency: 'BTC' }, token).catch(() => ({ result: [] })),
     deribit('private/get_user_trades_by_currency', { currency: 'USDC', kind: 'future', count: 100, sorting: 'desc' }, token).catch(() => ({ result: { trades: [] } })),
     fetchAAVE(),
     fetchPriceHistory(),
@@ -271,7 +275,7 @@ async function fetchAllData() {
   }));
 
   // Split positions by kind
-  const allPositions = (posRes.result || []).filter(p => p.size !== 0);
+  const allPositions = [...(posRes.result || []), ...(posResBTC.result || [])].filter(p => p.size !== 0);
   
   const futurePositions = allPositions.filter(p => p.kind === 'future').map(p => ({
     instrument: p.instrument_name, size: p.size_currency || p.size, direction: p.direction,
@@ -327,12 +331,17 @@ async function fetchAllData() {
   // ATH breakdown (simplified)
   let athBreakdown = null;
   if (aave) {
-    const debtRepayBtc = aave.debtUSDT / ATH;
-    const netBtcATH = aave.wbtcBTC - debtRepayBtc;
+    const totalDebtUSDC = aave.debtUSDT + (aave.debtUSDC || 0);
+    const debtRepayBtc = totalDebtUSDC / ATH;
+    const bufferUSDC = aave.usdcCol + aave.usdtCol;
+    const bufferBtc = bufferUSDC / ATH;
+    const netBtcATH = aave.wbtcBTC + bufferBtc - debtRepayBtc;
     athBreakdown = {
       wbtcStart: WBTC_START,
       currentWbtc: +aave.wbtcBTC.toFixed(4),
       accumulated: +(aave.wbtcBTC - WBTC_START).toFixed(4),
+      bufferUSDC: +bufferUSDC.toFixed(0),
+      bufferBtc: +bufferBtc.toFixed(4),
       debtRepayBtc: +debtRepayBtc.toFixed(4),
       netBtc: +netBtcATH.toFixed(4),
       netUSD: +(netBtcATH * ATH).toFixed(0)
@@ -461,6 +470,7 @@ async function fetchAllData() {
       usdtCol: +aave.usdtCol.toFixed(2),
       usdcCol: +aave.usdcCol.toFixed(2),
       debtUSDT: +aave.debtUSDT.toFixed(2),
+      debtUSDC: +(aave.debtUSDC || 0).toFixed(2),
       totalCollateralUSD: +aave.totalCollateralUSD.toFixed(2),
       totalDebtUSD: +aave.totalDebtUSD.toFixed(2),
       availableBorrowsUSD: +aave.availableBorrowsUSD.toFixed(2),
