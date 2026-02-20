@@ -291,9 +291,14 @@ function render(d) {
           <div class="card-sub">start: ${a.athBreakdown.wbtcStart} | accum: +${fmtBTC(a.athBreakdown.accumulated)}</div>
         </div>
         <div class="card">
+          <div class="card-label">Buffer USDC → BTC</div>
+          <div class="card-value green">+${fmtBTC(a.athBreakdown.bufferBtc)}</div>
+          <div class="card-sub">${fmtUSD(a.athBreakdown.bufferUSDC)} / ${fmtUSD(d.ATH)}</div>
+        </div>
+        <div class="card">
           <div class="card-label">Remb. dette en BTC</div>
           <div class="card-value red">−${fmtBTC(a.athBreakdown.debtRepayBtc)}</div>
-          <div class="card-sub">${fmtUSD(a.debtUSDT)} / ${fmtUSD(d.ATH)}</div>
+          <div class="card-sub">${fmtUSD((a.debtUSDT||0) + (a.debtUSDC||0))} / ${fmtUSD(d.ATH)}</div>
         </div>
       </div>
     </div>
