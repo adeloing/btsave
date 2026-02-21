@@ -522,11 +522,10 @@ function drawChart(d) {
     };
   }
 
-  // Chart bounds: lower = next step down, upper = max price in 24h
-  const nextDown = d.nextStepDown ? d.nextStepDown.prix : d.price - d.stepSize;
-  const maxPrice24h = Math.max(...candles.map(c => c.h));
-  const chartMin = nextDown - d.stepSize * 0.15;
-  const chartMax = maxPrice24h + d.stepSize * 0.15;
+  // Chart bounds: fixed $3000 range centered on current price
+  const chartRange = 3000;
+  const chartMin = d.price - chartRange / 2;
+  const chartMax = d.price + chartRange / 2;
 
   if (chart) chart.destroy();
   
