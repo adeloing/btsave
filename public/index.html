@@ -296,19 +296,49 @@ function render(d) {
           <div class="card-sub">${fmtUSD(a.athBreakdown.bufferUSDC)} / ${fmtUSD(d.ATH)}</div>
         </div>
         <div class="card">
+          <div class="card-label">Equity Deribit → BTC</div>
+          <div class="card-value green">+${fmtBTC(a.athBreakdown.deribitEquityBtc)}</div>
+          <div class="card-sub">${fmtUSD(a.athBreakdown.deribitEquityUSDC)} USDC</div>
+        </div>
+        <div class="card">
           <div class="card-label">Remb. dette en BTC</div>
           <div class="card-value red">−${fmtBTC(a.athBreakdown.debtRepayBtc)}</div>
           <div class="card-sub">${fmtUSD((a.debtUSDT||0) + (a.debtUSDC||0))} / ${fmtUSD(d.ATH)}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Perte short @ ATH</div>
+          <div class="card-value red">−${fmtBTC(a.athBreakdown.shortLossBtc)}</div>
+          <div class="card-sub">${fmtUSD(a.athBreakdown.shortLossUSDC)} USDC</div>
         </div>
       </div>
     </div>
     ` : ''}
 
     <div class="section">
-      <h3>📈 Grid Gains</h3>
+      <h3>💰 Funding Rate Gains</h3>
+      <div style="text-align:center;margin-bottom:10px">
+        <div class="card-value ${d.deribit.fundingGains.totalUSDC >= 0 ? 'green' : 'red'}" style="font-size:22px">${d.deribit.fundingGains.totalUSDC >= 0 ? '+' : ''}${d.deribit.fundingGains.totalUSDC.toFixed(4)} USDC</div>
+        <div class="card-sub">${d.deribit.fundingGains.count} settlements • Rate: ${d.deribit.fundingGains.rateAnnualPct}% ann. • Moy: ${d.deribit.fundingGains.avgPerSettlement.toFixed(4)}/j</div>
+        ${d.deribit.fundingGains.resetTimestamp ? `<div class="card-sub" style="margin-top:2px">Depuis: ${new Date(d.deribit.fundingGains.resetTimestamp).toLocaleDateString('fr-FR')}</div>` : ''}
+      </div>
+
+      <!-- Next settlement progress -->
+      <div style="margin:0 auto 10px;max-width:320px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:4px">
+          <span>Prochain versement</span>
+          <span>${new Date(d.deribit.fundingGains.nextSettlement).toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',timeZone:'UTC'})} UTC</span>
+        </div>
+        <div style="background:rgba(255,255,255,0.06);border-radius:4px;height:8px;overflow:hidden">
+          <div style="background:linear-gradient(90deg,var(--green),rgba(110,231,160,0.6));height:100%;border-radius:4px;width:${d.deribit.fundingGains.progressPct}%;transition:width 0.5s"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:4px">
+          <span style="color:var(--muted)">${d.deribit.fundingGains.progressPct}%</span>
+          <span style="color:var(--green);font-weight:600">Est. ~${d.deribit.fundingGains.estNextPayout > 0 ? '+' + d.deribit.fundingGains.estNextPayout.toFixed(4) : d.deribit.fundingGains.avgPerSettlement.toFixed(4)} USDC</span>
+        </div>
+      </div>
+
       <div style="text-align:center">
-        <div class="card-value ${d.deribit.gridGains.totalPnl >= 0 ? 'green' : 'red'}" style="font-size:22px">${d.deribit.gridGains.totalPnl >= 0 ? '+' : ''}${d.deribit.gridGains.totalPnl.toFixed(2)} USDC</div>
-        <div class="card-sub">${d.deribit.gridGains.tradeCount} trades exécutés</div>
+        <button onclick="resetFunding()" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);color:var(--red);padding:6px 16px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">🔄 Reset (cash sorti)</button>
       </div>
     </div>
     ` : `
@@ -396,12 +426,44 @@ function render(d) {
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
         ${d.nextActions.status.map(s => `<span style="background:rgba(255,255,255,0.05);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--muted)">${s}</span>`).join('')}
       </div>` : ''}
-      ${d.nextActions.actions.map((a, i) => `
-        <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;${i < d.nextActions.actions.length - 1 ? 'border-bottom:1px solid var(--border)' : ''}">
-          <span style="color:var(--accent);font-size:14px;line-height:1.2">›</span>
-          <span style="font-size:12px;line-height:1.4">${a}</span>
+      ${d.nextActions.actions.map((a, i) => {
+        const indented = a.startsWith('__indent__');
+        const text = indented ? a.replace('__indent__', '') : a;
+        return `
+        <div style="display:flex;align-items:flex-start;gap:${indented ? '6' : '8'}px;padding:${indented ? '3' : '6'}px 0;${indented ? 'margin-left:24px;border-left:2px solid rgba(246,176,107,0.25);padding-left:10px;' : ''}${i < d.nextActions.actions.length - 1 && !d.nextActions.actions[i+1]?.startsWith?.('__indent__') ? 'border-bottom:1px solid var(--border)' : ''}">
+          ${indented ? '' : '<span style="color:var(--accent);font-size:14px;line-height:1.2">›</span>'}
+          <span style="font-size:${indented ? '11' : '12'}px;line-height:1.4;${indented ? 'color:var(--text)' : ''}">${text}</span>
+        </div>`;
+      }).join('')}
+
+      ${d.putRecommendation ? `
+      <div style="margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid ${d.putRecommendation.eligible && d.putRecommendation.needsAction ? 'rgba(110,231,160,0.4)' : 'rgba(122,114,133,0.3)'};background:${d.putRecommendation.eligible && d.putRecommendation.needsAction ? 'rgba(110,231,160,0.06)' : 'rgba(255,255,255,0.02)'}">
+        <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:${d.putRecommendation.eligible && d.putRecommendation.needsAction ? 'var(--green)' : 'var(--muted)'}">
+          🛡️ Prochain Put OTM ${d.putRecommendation.afterSwap ? '<span style="font-size:10px;font-weight:400;color:var(--accent)">(après prochain swap)</span>' : ''}
         </div>
-      `).join('')}
+        ${d.putRecommendation.eligible ? `
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+            WBTC extra: ${fmtBTC(d.putRecommendation.wbtcExtra)} (${d.putRecommendation.wbtcExtraPct}%)${d.putRecommendation.afterSwap ? ' → après swap: ' + fmtBTC(d.putRecommendation.wbtcExtraAfterSwap) + ' (' + d.putRecommendation.wbtcExtraPctAfterSwap + '%)' : ''} — Cible: ${d.putRecommendation.targetCoveragePct}% couvert
+          </div>
+          ${d.putRecommendation.needsAction ? `
+            ${!d.putRecommendation.minSizeOk ? `
+              <div style="font-size:11px;color:var(--accent);margin-bottom:4px">⏳ Extra < 0.20 BTC — attendre plus d'accumulation</div>
+            ` : `
+              <div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:4px">
+                ${d.putRecommendation.afterSwap ? '5️⃣' : '🛡️'} ACHETER ${d.putRecommendation.deficit} BTC PUT $${d.putRecommendation.strikePrice.toLocaleString()} (−${d.putRecommendation.strikeOTM}% OTM) exp ${d.putRecommendation.expiry}
+              </div>
+              <div style="font-size:10px;color:var(--muted)">
+                Couverture actuelle: ${d.putRecommendation.currentCoverage} / ${d.putRecommendation.targetSize} BTC
+              </div>
+            `}
+          ` : `
+            <div style="font-size:12px;color:var(--green)">✅ Couverture OK (${d.putRecommendation.currentCoverage} / ${d.putRecommendation.targetSize} BTC)</div>
+          `}
+        ` : `
+          <div style="font-size:11px;color:var(--muted)">${d.putRecommendation.reason}</div>
+        `}
+      </div>
+      ` : ''}
     </div>
     ` : ''}
 
@@ -529,6 +591,25 @@ function drawChart(d) {
 }
 
 let closeConfirm = {};
+let fundingResetConfirm = 0;
+async function resetFunding() {
+  if (!fundingResetConfirm || Date.now() - fundingResetConfirm > 3000) {
+    fundingResetConfirm = Date.now();
+    event.target.textContent = '⚠️ CONFIRMER RESET';
+    event.target.style.background = 'rgba(255,107,107,0.3)';
+    setTimeout(() => { event.target.textContent = '🔄 Reset (cash sorti)'; event.target.style.background = 'rgba(255,107,107,0.15)'; }, 3000);
+    return;
+  }
+  fundingResetConfirm = 0;
+  try {
+    const basePath = location.pathname.replace(/\/+$/, '');
+    const res = await fetch(basePath + '/api/funding-reset', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const d = await res.json();
+    if (d.ok) { load(); }
+    else { alert('Erreur: ' + (d.error || 'inconnue')); }
+  } catch(e) { alert('Erreur réseau'); }
+}
+
 async function closePosition(instrument, btn) {
   if (!closeConfirm[instrument] || Date.now() - closeConfirm[instrument] > 3000) {
     closeConfirm[instrument] = Date.now();

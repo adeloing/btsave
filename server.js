@@ -2,6 +2,17 @@ const express = require('express');
 const https = require('https');
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
+const FUNDING_RESET_FILE = path.join(__dirname, 'funding-reset.json');
+function getFundingReset() {
+  try { return JSON.parse(fs.readFileSync(FUNDING_RESET_FILE, 'utf8')); }
+  catch { return { resetTimestamp: 0, resetTotal: 0 }; }
+}
+function setFundingReset(data) {
+  fs.writeFileSync(FUNDING_RESET_FILE, JSON.stringify(data, null, 2));
+}
 const session = require('express-session');
 const app = express();
 const PORT = 3001;
@@ -252,13 +263,14 @@ app.use(express.static('public'));
 async function fetchAllData() {
   const token = await getDeribitToken();
 
-  const [ticker, account, ordersRes, posRes, posResBTC, tradesRes, aave, historyPrices, ethInfo] = await Promise.all([
+  const [ticker, account, ordersRes, posRes, posResBTC, tradesRes, settlementsRes, aave, historyPrices, ethInfo] = await Promise.all([
     deribit('public/ticker', { instrument_name: 'BTC_USDC-PERPETUAL' }, token),
     deribit('private/get_account_summary', { currency: 'USDC' }, token),
     deribit('private/get_open_orders_by_currency', { currency: 'USDC' }, token),
     deribit('private/get_positions', { currency: 'USDC' }, token),
     deribit('private/get_positions', { currency: 'BTC' }, token).catch(() => ({ result: [] })),
     deribit('private/get_user_trades_by_currency', { currency: 'USDC', kind: 'future', count: 100, sorting: 'desc' }, token).catch(() => ({ result: { trades: [] } })),
+    deribit('private/get_settlement_history_by_currency', { currency: 'USDC', type: 'settlement', count: 1000 }, token).catch(() => ({ result: { settlements: [] } })),
     fetchAAVE(),
     fetchPriceHistory(),
     fetchEthInfo(),
@@ -328,14 +340,29 @@ async function fetchAllData() {
     };
   }
 
-  // ATH breakdown (simplified)
+  // ATH breakdown — full picture including Deribit positions
   let athBreakdown = null;
   if (aave) {
     const totalDebtUSDC = aave.debtUSDT + (aave.debtUSDC || 0);
     const debtRepayBtc = totalDebtUSDC / ATH;
     const bufferUSDC = aave.usdcCol + aave.usdtCol;
     const bufferBtc = bufferUSDC / ATH;
-    const netBtcATH = aave.wbtcBTC + bufferBtc - debtRepayBtc;
+
+    // Deribit: short loss at ATH + equity
+    // Short perp: if we close at ATH, loss = size * (ATH - avgPrice) in USDC
+    let shortLossUSDC = 0;
+    for (const p of futurePositions) {
+      if (p.direction === 'sell' && p.avgPrice) {
+        shortLossUSDC += Math.abs(p.size) * (ATH - p.avgPrice);
+      }
+    }
+    const shortLossBtc = shortLossUSDC / ATH;
+
+    // Puts are worthless at ATH (strike << ATH), premium already lost in equity
+    // Deribit equity (USDC) = net value after all current PnL
+    const deribitEquityBtc = equity / ATH;
+
+    const netBtcATH = aave.wbtcBTC + bufferBtc - debtRepayBtc + deribitEquityBtc - shortLossBtc;
     athBreakdown = {
       wbtcStart: WBTC_START,
       currentWbtc: +aave.wbtcBTC.toFixed(4),
@@ -343,23 +370,61 @@ async function fetchAllData() {
       bufferUSDC: +bufferUSDC.toFixed(0),
       bufferBtc: +bufferBtc.toFixed(4),
       debtRepayBtc: +debtRepayBtc.toFixed(4),
+      shortLossUSDC: +shortLossUSDC.toFixed(0),
+      shortLossBtc: +shortLossBtc.toFixed(4),
+      deribitEquityUSDC: +equity.toFixed(0),
+      deribitEquityBtc: +deribitEquityBtc.toFixed(4),
       netBtc: +netBtcATH.toFixed(4),
       netUSD: +(netBtcATH * ATH).toFixed(0)
     };
   }
 
-  // Grid gains
-  const trades = (tradesRes.result && tradesRes.result.trades) || [];
-  const gridTrades = trades.filter(t => t.label && t.label.startsWith('grid_'));
-  let gridGains = { totalPnl: 0, tradeCount: gridTrades.length, trades: [] };
-  for (const t of gridTrades) {
-    gridGains.totalPnl += t.profit_loss || 0;
-    gridGains.trades.push({
-      direction: t.direction, price: t.price, amount: t.amount,
-      pnl: t.profit_loss || 0, label: t.label, timestamp: t.timestamp
+  // Funding rate gains
+  const settlements = (settlementsRes.result && settlementsRes.result.settlements) || [];
+  const fundingReset = getFundingReset();
+  const fundingSettlements = settlements.filter(s => s.position !== 0 && s.timestamp > fundingReset.resetTimestamp);
+  let fundingTotal = 0;
+  const fundingHistory = [];
+  for (const s of fundingSettlements) {
+    fundingTotal += s.funding || 0;
+    fundingHistory.push({
+      timestamp: s.timestamp,
+      funding: +(s.funding || 0).toFixed(6),
+      position: s.position,
+      price: s.index_price,
     });
   }
-  gridGains.totalPnl = +gridGains.totalPnl.toFixed(2);
+  // Current funding rate from ticker
+  const funding8h = ticker.result.funding_8h || 0;
+  // BTC_USDC-PERPETUAL settles once per day at 08:00 UTC
+  const fundingAnnualPct = +(funding8h * 365 * 100).toFixed(2);
+
+  // Next settlement countdown
+  const now = Date.now();
+  const today8 = new Date(); today8.setUTCHours(8, 0, 0, 0);
+  let nextSettlement = today8.getTime();
+  if (nextSettlement <= now) nextSettlement += 24 * 3600 * 1000;
+  const prevSettlement = nextSettlement - 24 * 3600 * 1000;
+  const progressPct = +((now - prevSettlement) / (nextSettlement - prevSettlement) * 100).toFixed(1);
+
+  // Estimated next payout: avg funding per settlement × current position factor
+  const avgFunding = fundingSettlements.length > 0 ? fundingTotal / fundingSettlements.length : 0;
+  // Also compute rate-based estimate: funding_8h * position_notional (but for daily settlement)
+  const shortNotional = futurePositions.filter(p => p.direction === 'sell').reduce((s, p) => s + Math.abs(p.size) * price, 0);
+  const estNextPayout = shortNotional > 0 ? +(funding8h * shortNotional).toFixed(4) : 0;
+
+  const fundingGains = {
+    totalUSDC: +fundingTotal.toFixed(4),
+    count: fundingSettlements.length,
+    rate8h: funding8h,
+    rateAnnualPct: fundingAnnualPct,
+    avgPerSettlement: +avgFunding.toFixed(4),
+    estNextPayout,
+    nextSettlement,
+    progressPct,
+    history: fundingHistory.slice(0, 20),
+    resetTimestamp: fundingReset.resetTimestamp,
+  };
 
   // Determine current zone based on Health Factor (Finale Ultime)
   const pctFromATH = ((price - ATH) / ATH) * 100;
@@ -430,20 +495,121 @@ async function fetchAllData() {
     nextActions.actions.push('Mode protection / monétisation puts');
     if (hasPuts) nextActions.actions.push('Conserver puts (protection active)');
   } else if (hf < 1.50) {
-    nextActions.actions.push('👁️ HF ' + hf.toFixed(2) + ' — Monitor renforcé');
-    nextActions.actions.push('Emprunts toujours autorisés');
-    nextActions.actions.push('Accumuler: emprunter ' + BORROW_PER_STEP + ' USDC → swap WBTC');
+    nextActions.actions.push('👁️ HF ' + hf.toFixed(2) + ' — Monitor renforcé, emprunts autorisés');
+    if (hasPuts) nextActions.actions.push('🛡️ Puts actifs — protection en place');
   } else {
     // HF >= 1.50 — Accumulation normale
     nextActions.actions.push('✅ HF sain (' + hf.toFixed(2) + ') — Accumulation normale');
-    nextActions.actions.push('Accumuler: emprunter ' + BORROW_PER_STEP + ' USDC → swap WBTC');
-    nextActions.actions.push('Short: ' + SHORT_PER_STEP + ' BTC au prochain palier');
-    if (hasPuts) nextActions.actions.push('Puts actifs — protection en place');
+    if (hasPuts) nextActions.actions.push('🛡️ Puts actifs — protection en place');
+  }
+
+  // Manual steps (shown indented under directional trigger)
+  nextActions.manualSteps = [];
+  if (hf >= 1.40) {
+    nextActions.manualSteps.push('1️⃣ AAVE → Borrow ' + BORROW_PER_STEP.toLocaleString('fr-FR') + ' USDC');
+    nextActions.manualSteps.push('2️⃣ DeFiLlama → Swap ' + BORROW_PER_STEP.toLocaleString('fr-FR') + ' USDC → WBTC (~' + (BORROW_PER_STEP / price).toFixed(4) + ' BTC @ $' + Math.round(price).toLocaleString('fr-FR') + ')');
+    nextActions.manualSteps.push('3️⃣ AAVE → Supply aEthWBTC');
+    if (hf >= 1.50) {
+      nextActions.manualSteps.push('4️⃣ Deribit → Sell stop ' + SHORT_PER_STEP + ' BTC au prochain palier');
+    }
+  }
+
+  // === PUT OTM recommendation ===
+  const wbtcExtra = aave ? aave.wbtcBTC - WBTC_START : 0;
+  const wbtcExtraPct = WBTC_START > 0 ? (wbtcExtra / WBTC_START) * 100 : 0;
+  // Forward-looking: after next borrow+swap
+  const nextSwapBtc = BORROW_PER_STEP / price;
+  const wbtcExtraAfterSwap = wbtcExtra + nextSwapBtc;
+  const wbtcExtraPctAfterSwap = (wbtcExtraAfterSwap / WBTC_START) * 100;
+  const currentPutCoverage = putSize; // BTC covered by current puts
+  let putRecommendation = null;
+
+  if (hf >= 1.40) { // No new puts below HF 1.40
+    let targetCoveragePct = 0;
+    let targetStrikeOTM = 0;
+    let targetExpDays = '';
+
+    // Use after-swap values if current is below threshold but next swap crosses it
+    const useAfterSwap = wbtcExtraPct < 6 && wbtcExtraPctAfterSwap >= 6 && hf >= 1.40;
+    const evalPct = useAfterSwap ? wbtcExtraPctAfterSwap : wbtcExtraPct;
+    const evalExtra = useAfterSwap ? wbtcExtraAfterSwap : wbtcExtra;
+
+    if (evalPct >= 24) {
+      targetCoveragePct = 100;
+      targetStrikeOTM = 21;
+      targetExpDays = '30-45j';
+    } else if (evalPct >= 14 && hf >= 1.56) {
+      targetCoveragePct = 85;
+      targetStrikeOTM = 23;
+      targetExpDays = '35-50j';
+    } else if (evalPct >= 6 && hf >= 1.68) {
+      targetCoveragePct = 60;
+      targetStrikeOTM = 27;
+      targetExpDays = '45-60j';
+    }
+
+    // HF adjustments
+    if (hf >= 1.40 && hf < 1.55 && targetCoveragePct > 0) {
+      targetCoveragePct = 100;
+      targetStrikeOTM = Math.min(targetStrikeOTM, 20);
+    } else if (hf >= 1.55 && hf < 1.70 && targetCoveragePct > 0) {
+      targetCoveragePct = Math.min(targetCoveragePct + 15, 100);
+      targetStrikeOTM = Math.max(targetStrikeOTM - 2, 18);
+    }
+
+    if (targetCoveragePct > 0) {
+      const targetSize = +(evalExtra * targetCoveragePct / 100).toFixed(2);
+      const strikePrice = Math.round(price * (1 - targetStrikeOTM / 100) / 1000) * 1000;
+      const deficit = +(targetSize - currentPutCoverage).toFixed(2);
+
+      putRecommendation = {
+        eligible: true,
+        afterSwap: useAfterSwap,
+        wbtcExtra: +wbtcExtra.toFixed(4),
+        wbtcExtraPct: +wbtcExtraPct.toFixed(1),
+        wbtcExtraAfterSwap: +wbtcExtraAfterSwap.toFixed(4),
+        wbtcExtraPctAfterSwap: +wbtcExtraPctAfterSwap.toFixed(1),
+        targetCoveragePct,
+        targetSize,
+        currentCoverage: +currentPutCoverage.toFixed(2),
+        deficit,
+        strikeOTM: targetStrikeOTM,
+        strikePrice,
+        expiry: targetExpDays,
+        needsAction: deficit > 0.05,
+        minSizeOk: evalExtra >= 0.20,
+      };
+    } else {
+      // Check if next swap would cross threshold
+      let reason = wbtcExtraPct < 6 ? 'WBTC extra < 6% (' + wbtcExtraPct.toFixed(1) + '%)' : 'HF insuffisant pour ce palier';
+      if (wbtcExtraPct < 6 && wbtcExtraPctAfterSwap < 6) {
+        reason += ' — après prochain swap: ' + wbtcExtraPctAfterSwap.toFixed(1) + '% (toujours < 6%)';
+      }
+      putRecommendation = {
+        eligible: false,
+        wbtcExtra: +wbtcExtra.toFixed(4),
+        wbtcExtraPct: +wbtcExtraPct.toFixed(1),
+        wbtcExtraAfterSwap: +wbtcExtraAfterSwap.toFixed(4),
+        wbtcExtraPctAfterSwap: +wbtcExtraPctAfterSwap.toFixed(1),
+        reason,
+      };
+    }
+  } else {
+    putRecommendation = {
+      eligible: false,
+      wbtcExtra: +wbtcExtra.toFixed(4),
+      wbtcExtraPct: +wbtcExtraPct.toFixed(1),
+      reason: 'HF < 1.40 — mode monétisation uniquement',
+    };
   }
 
   // Directional actions
   if (nextStepDown) {
     nextActions.actions.push('▼ Si ' + nextStepDown.prix.toLocaleString('fr-FR') + ': sell stop 0.095 BTC se déclenche');
+    // Manual steps go right after ▼
+    for (const s of nextActions.manualSteps) {
+      nextActions.actions.push('__indent__' + s);
+    }
   }
   if (nextStepUp) {
     nextActions.actions.push('▲ Si ' + nextStepUp.prix.toLocaleString('fr-FR') + ': conserver shorts pour contango');
@@ -453,6 +619,7 @@ async function fetchAllData() {
     price, ATH, stepSize: STEP_SIZE, currentStep, steps,
     nextStepDown, nextStepUp, currentStepPrice,
     nextActions,
+    putRecommendation,
     strategy: {
       name: 'Hybrid ZERO-LIQ Aggressive Accumulator + Quarterly Contango Hedge',
       split: '79/18/3',
@@ -479,7 +646,7 @@ async function fetchAllData() {
       liquidationThreshold: aave.liquidationThreshold,
       athBreakdown
     } : null,
-    deribit: { equity, available, orders, futurePositions, optionPositions, gridGains },
+    deribit: { equity, available, orders, futurePositions, optionPositions, fundingGains },
     eth: ethInfo,
     priceHistory: historyPrices
   };
@@ -536,6 +703,14 @@ app.post('/api/close-position', express.json(), async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+app.post('/api/funding-reset', express.json(), (req, res) => {
+  if (!req.session?.user) return res.status(401).json({ error: 'Not authenticated' });
+  if (req.session.user !== 'xou') return res.status(403).json({ error: 'Admin only' });
+  const now = Date.now();
+  setFundingReset({ resetTimestamp: now, resetTotal: 0 });
+  res.json({ ok: true, resetTimestamp: now });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log('Dashboard running on 0.0.0.0:' + PORT));
