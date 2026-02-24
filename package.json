@@ -13,5 +13,8 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "puppeteer": "^24.37.3"
+  },
+  "devDependencies": {
+    "pm2": "^6.0.14"
   }
 }

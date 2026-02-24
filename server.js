@@ -17,6 +17,16 @@ const session = require('express-session');
 const app = express();
 const PORT = 3001;
 
+// === HEALTH CHECK ENDPOINT ===
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    uptime: process.uptime(),
+    timestamp: Date.now(),
+    memory: process.memoryUsage()
+  });
+});
+
 // === AUTH CONFIG ===
 const SESSION_SECRET = 'btsave-kei-' + crypto.randomBytes(8).toString('hex');
 const USERS = {
