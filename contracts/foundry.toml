@@ -8,7 +8,7 @@ optimizer_runs = 200
 via_ir = true
 
 [rpc_endpoints]
-sepolia = "https://rpc2.sepolia.org"
+sepolia = "https://0xrpc.io/sep"
 
 [fmt]
 bracket_spacing = true

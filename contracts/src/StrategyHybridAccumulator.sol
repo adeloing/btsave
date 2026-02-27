@@ -82,10 +82,11 @@ contract StrategyHybridAccumulator is
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(OPERATOR_ROLE, msg.sender);
 
-        if (_vault == address(0)) revert InvalidVaultAddress();
         if (_nftRewards == address(0)) revert InvalidNFTAddress();
 
-        vault = ITurboPaperBoatVault(_vault);
+        if (_vault != address(0)) {
+            vault = ITurboPaperBoatVault(_vault);
+        }
         nftRewards = INFTCycleRewards(_nftRewards);
         
         cycleCount = 0;
