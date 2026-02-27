@@ -18,6 +18,7 @@ interface ITurboPaperBoatVault {
 
 interface INFTCycleRewards {
     function requestMint(address user, uint256 avgBalanceUSDC) external returns (uint256 requestId);
+    function testMint(address user, uint256 avgBalanceUSDC) external;
 }
 
 interface IERC20Decimals {

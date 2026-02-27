@@ -319,6 +319,34 @@ contract NFTCycleRewards is
         emit NFTMinted(tokenId, user, tier, 0); // requestId = 0 for emergency mints
     }
 
+    /**
+     * @notice Test mint with pseudo-random tier (no VRF needed)
+     * @dev Uses block.prevrandao for tier randomness. NOT for production.
+     * @param user Address to receive NFT
+     * @param avgBalanceUSDC User's average balance (must be >= 100 USDC)
+     */
+    function testMint(address user, uint256 avgBalanceUSDC)
+        external
+        onlyRole(MINTER_ROLE)
+    {
+        if (avgBalanceUSDC < MIN_BALANCE_USDC) {
+            revert InsufficientBalance();
+        }
+
+        // Pseudo-random tier using block.prevrandao + user + counter
+        uint256 randomish = uint256(keccak256(abi.encodePacked(
+            block.prevrandao, user, _tokenIdCounter, block.timestamp
+        )));
+        Tier tier = Tier(randomish % 4);
+
+        uint256 tokenId = _tokenIdCounter++;
+        _mint(user, tokenId);
+        tierOf[tokenId] = tier;
+        totalMinted++;
+
+        emit NFTMinted(tokenId, user, tier, 0);
+    }
+
     /* ========== OVERRIDES ========== */
 
     /**

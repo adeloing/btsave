@@ -308,6 +308,20 @@ contract StrategyHybridAccumulator is
         emit NFTMintTriggered(user, avgBalance, requestId);
     }
 
+    /**
+     * @notice Test NFT mint without VRF (uses block.prevrandao)
+     * @dev For Sepolia testing only. Uses testMint instead of requestMint.
+     * @param user User address
+     * @param avgBalance Average balance over cycle
+     */
+    function triggerNFTMintTest(address user, uint256 avgBalance) 
+        external 
+        onlyRole(DEFAULT_ADMIN_ROLE) 
+    {
+        nftRewards.testMint(user, avgBalance);
+        lastCycleSnapshots[user] = avgBalance;
+    }
+
     /* ========== UPGRADE AUTHORIZATION ========== */
 
     /**
