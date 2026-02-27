@@ -1,13 +1,13 @@
 {
   "nom_strategie": "Hybrid ZERO-LIQ Aggressive Accumulator + Quarterly Contango Hedge",
-  "date_verrouillage": "17 février 2026",
-  "version": "Finale - Répartition 79/18/3",
-  "objectif_principal": "Maximiser la quantité de WBTC à chaque nouvel ATH tout en maintenant un risque de liquidation = 0 % réel. Priorité absolue : préserver le capital + éviter toute liquidation soudaine.",
+  "date_verrouillage": "26 février 2026",
+  "version": "v2.0 - Répartition 82/15/3 - Full-Time Solo Multisig 2/3 - Turbo Paper Boat Vault",
+  "objectif_principal": "Maximiser la quantité de WBTC nette conservée à chaque nouvel ATH ratcheté en vendant uniquement la portion nécessaire du WBTC accumulé (P2) pour rembourser 100 % de la dette. Gains Deribit (carry + puts) restent comme profit net bonus. Risque de liquidation = 0 % réel. Priorité absolue : préserver le capital + transformer chaque dip en gain WBTC net permanent.",
   "repartition_initiale_cycle": {
-    "WBTC_AAVE": "79 %",
-    "USDC_AAVE": "18 %",
+    "WBTC_AAVE": "82 %",
+    "USDC_AAVE": "15 %",
     "USDC_Deribit": "3 %",
-    "description": "Cette répartition est appliquée à chaque reset au nouvel ATH ratcheté. Elle est agressive tout en préservant un coussin de sécurité suffisant."
+    "description": "Répartition fixe v2.0 appliquée à chaque reset au nouvel ATH ratcheté. Buffer réduit à 15 % (gestion full-time)."
   },
   "variables_definies_au_debut_du_cycle": {
     "ATH": "Prix spot BTC au moment du reset",
@@ -21,42 +21,79 @@
   "principes_fondamentaux": [
     "Un cycle commence et se termine uniquement à un nouvel ATH ratcheté",
     "Toutes les quantités et paliers sont fixes dès le début du cycle",
-    "Toutes les décisions dépendent exclusivement du prix spot BTC",
+    "Toutes les décisions (emprunts, monétisation, protection) dépendent exclusivement du Health Factor AAVE",
     "On ne se couvre jamais contre la hausse",
     "On transforme les baisses en opportunités d'accumulation massive",
-    "Zéro risque de liquidation grâce aux puts + remboursements programmés"
+    "Zéro risque de liquidation grâce au buffer 18 % + puts auto + exécution < 1 h"
   ],
+  "plateformes_et_chaines": "AAVE V3 Core sur L1 Ethereum uniquement (WBTC LTV 73 %, LT 78 %). Deribit pour carry delta-neutral + puts OTM. Tous swaps via DeFiLlama sur Ethereum L1.",
   "distinction_actions": {
     "automatisees": [
-      "Grille Deribit : Stop Market Sell à chaque palier baisse",
-      "Accrual contango/funding toutes les 8 heures"
+      "Grille Deribit : Stop Market Sell à chaque palier baisse de 5 %",
+      "Accrual contango/funding toutes les 8 heures",
+      "Vérification automatique puts OTM toutes les 24 h (script ou webhook)"
     ],
     "schedulees": [
-      "Tous les 7-14 jours ou dès > 1500 USDC cash sur Deribit → retirer → DeFiLlama → aEthWBTC",
-      "Tous les 30-45 jours → roll/ajout puts OTM sur partie accumulée P2"
+      "Tous les 7-14 jours ou dès > 1 500 USDC cash sur Deribit → retirer → DeFiLlama → aEthWBTC",
+      "Roll puts OTM tous les 30-35 jours si condition WBTC_extra toujours remplie"
     ],
     "manuelles": [
       "À chaque palier baisse : Borrow borrow_per_step USDC + DeFiLlama swap → aEthWBTC",
-      "Vente de puts et remboursement dette aux paliers définis",
-      "Reset complet au nouvel ATH : fermeture shorts, remboursement dette, rééquilibrage 79/18/3"
+      "Vente de puts et remboursement dette aux paliers HF définis (exécution < 1 h)",
+      "Reset complet au nouvel ATH : fermeture shorts, vente partielle WBTC accumulé, remboursement dette, rééquilibrage 79/18/3"
     ]
   },
   "regles_gestion_par_prix_spot": {
-    "a_la_baisse": {
-      "jusqua_palier_ATH_minus_12_percent": "Accumuler normalement (quantité fixe)",
-      "palier_ATH_minus_12.3_percent": "Accumuler + vendre 50 % des puts → rembourser 25 % dette",
-      "palier_ATH_minus_17.6_percent": "Accumuler + vendre les 50 % puts restants → rembourser 40 % dette restante",
-      "sous_ATH_minus_21_percent": "Stop total des nouveaux emprunts",
-      "sous_ATH_minus_26_percent": "Vendre tous puts restants + rembourser maximum de dette"
-    },
+    "a_la_baisse": "Accumuler normalement avec borrow_per_step fixe à chaque palier de 5 % (step_size). Aucun stop ou limite basé sur le % de baisse du prix spot.",
     "a_la_hausse": "Aucune action. Garder tous les shorts ouverts pour maximiser le contango.",
-    "nouvel_ATH": "Fermer tous shorts → rembourser 100 % dette → conserver tout WBTC supplémentaire → rééquilibrer en 79 % WBTC / 18 % USDC AAVE / 3 % USDC Deribit → reset du cycle"
+    "nouvel_ATH": "Fermer tous les shorts Deribit (profits = bonus net). Vendre uniquement la portion nécessaire du WBTC accumulé (P2) via DeFiLlama pour générer exactement le montant USDC nécessaire au remboursement 100 % de la dette AAVE. Conserver tout le WBTC restant comme gain net permanent. Rééquilibrer le collateral restant en 79/18/3. Reset du cycle."
+  },
+  "regles_gestion_par_HF": {
+    "priorite": "Gestion 100 % basée sur Health Factor AAVE. Le prix spot n'est plus qu'un déclencheur d'accumulation, jamais une limite.",
+    "HF_1_50_et_plus": "Accumulation normale à chaque palier baisse (aucune restriction)",
+    "HF_1_40_à_1_50": "Monitor renforcé. Toujours autorisé à emprunter",
+    "HF_sous_1_40": "Stop total et immédiat des nouveaux emprunts (plus aucun borrow_per_step). Passer en mode protection / monétisation puts",
+    "palier_HF_1_30": "Vendre 50 % des puts → rembourser 25 % de la dette restante",
+    "palier_HF_1_25": "Vendre les 50 % puts restants → rembourser 40 % de la dette restante",
+    "sous_HF_1_15": "Vendre tous puts restants + rembourser le maximum possible de dette. Position ultra-défensive."
+  },
+  "regles_gestion_puts_OTM": {
+    "objectif": "Automatisation 100 % adaptée à la stratégie 79/18/3 agressive sur L1 Ethereum – protection maximale du WBTC accumulé tout en maximisant le carry net",
+    "tracking_variables": {
+      "WBTC_extra_percent": "(WBTC_total_AAVE - WBTC_start) / WBTC_start × 100",
+      "HF_courant": "Health Factor AAVE temps réel"
+    },
+    "regles_declenchement_achat_roll": [
+      {
+        "condition": "WBTC_extra_percent ≥ 6 % ET HF ≥ 1.68",
+        "action": "Acheter/roll puts couvrant 60 % du WBTC_extra (strike -26 % à -28 % OTM, exp 45-60 jours)"
+      },
+      {
+        "condition": "WBTC_extra_percent ≥ 14 % ET HF ≥ 1.56",
+        "action": "Acheter/roll puts couvrant 85 % du WBTC_extra (strike -23 % à -24 % OTM, exp 35-50 jours)"
+      },
+      {
+        "condition": "WBTC_extra_percent ≥ 24 % (quel que soit HF > 1.35)",
+        "action": "Acheter/roll puts couvrant 100 % du WBTC_extra (strike -21 % OTM, exp 30-45 jours)"
+      }
+    ],
+    "ajustements_dynamiques_HF": {
+      "HF_1_55_à_1_70": "Augmenter couverture cible +15 points et resserrer strike de 2 %",
+      "HF_1_40_à_1_55": "Passer directement à 100 % couverture + strike -20 %",
+      "HF_sous_1_40": "Arrêt total des nouveaux achats → mode monétisation uniquement (règles HF existantes)"
+    },
+    "contraintes_pratiques": {
+      "taille_minimale": "WBTC_extra ≥ 0.20 BTC (ou équivalent ~20-25 k$ selon prix) – évite les micro-transactions L1",
+      "roll": "Automatique tous les 30-35 jours si condition toujours remplie",
+      "financement": "100 % prioritaire sur cash carry Deribit (jamais toucher le buffer 18 % USDC)",
+      "post_équilibrage_HF": "Le % extra WBTC reste l'indicateur principal même après remboursement dette"
+    }
   },
   "equilibrages": {
     "intra_AAVE": "Uniquement via DeFiLlama (emprunt USDC → aEthWBTC direct). Aucun Collateral Swap pendant le cycle (sauf au reset pour le 79/18/3).",
-    "inter_AAVE_Deribit": "Uniquement transfert du cash carry tous les 7-14 jours et pour les shorts/puts.",
+    "inter_AAVE_Deribit": "Uniquement via HF (vente puts / profits shorts → repay dette AAVE). Transfert cash carry tous 7-14 jours.",
     "reset_79_18_3": "Au nouvel ATH : ajustement manuel du collateral pour atteindre exactement 79 % WBTC / 18 % USDC"
   },
-  "risque_liquidation": "0 % réel avec le respect des règles de monétisation des puts et remboursement dette aux paliers définis.",
-  "evolutivite": "Stratégie 100 % réutilisable à vie. Chaque cycle est indépendant et entièrement déterministe."
+  "risque_liquidation": "0 % réel avec le respect strict des règles HF + buffer 18 % USDC + puts auto + exécution < 1 h sur L1 Ethereum. Même sans puts, HF reste > 1.75 en cas de crash total.",
+  "evolutivite": "Stratégie 100 % réutilisable à vie. Chaque cycle indépendant et entièrement déterministe. Version finale verrouillée le 18 février 2026."
 }
