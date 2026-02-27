@@ -86,10 +86,11 @@ contract OracleManager is
         _grantRole(KEEPER_ROLE, msg.sender);
 
         if (_btcUsdFeed == address(0)) revert InvalidPriceFeed();
-        if (_strategy == address(0)) revert InvalidStrategy();
 
         btcUsdFeed = AggregatorV3Interface(_btcUsdFeed);
-        strategy = IStrategyHybridAccumulator(_strategy);
+        if (_strategy != address(0)) {
+            strategy = IStrategyHybridAccumulator(_strategy);
+        }
         currentATH = _initialATH;
         lastATHUpdate = block.timestamp;
         athUpdateCount = 0;
