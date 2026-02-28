@@ -94,6 +94,10 @@ contract VaultTPB {
     uint256 public pendingPoolBalance;  // USDC not yet rebalanced
     uint256 public lastRebalanceTime;
 
+    // --- Cycle Start Balances (for NFT eligibility: balance_end >= balance_start) ---
+    mapping(address => uint256) public cycleStartBalance;
+    mapping(address => uint256) public cycleStartSnapshotCycle; // which cycle was snapshotted
+
     // --- Auto-Redeem Registry ---
     address[] public autoRedeemUsers;  // Users with autoRedeemPct > 0
     mapping(address => bool) public isAutoRedeemRegistered;
@@ -202,6 +206,9 @@ contract VaultTPB {
         // Mint TPB tokens based on current NAV
         uint256 tpbToMint = _usdcToTPB(netAmount);
 
+        // Snapshot cycle start balance (lazy, first interaction in cycle)
+        _ensureCycleStartSnapshot(msg.sender);
+
         // Update time-weighted checkpoint BEFORE mint (captures pre-balance)
         _updateCheckpoint(msg.sender);
 
@@ -211,6 +218,9 @@ contract VaultTPB {
         userCheckpoints[msg.sender].balance = balanceOf[msg.sender];
         // Update global tracking
         globalLastBalance = totalSupply;
+
+        // For new depositors: set cycle start to post-deposit balance
+        _updateCycleStartAfterDeposit(msg.sender);
 
         // Add to pending pool
         pendingPoolBalance += netAmount;
@@ -243,6 +253,40 @@ contract VaultTPB {
     // ============================================================
     //            TIME-WEIGHTED ACCOUNTING (Priority 1)
     // ============================================================
+
+    /**
+     * @notice Lazy snapshot: record user's balance at cycle start (first interaction in new cycle).
+     *         For existing holders: captures pre-interaction balance (= their balance at cycle start).
+     *         Must be called BEFORE any balance change in the tx.
+     */
+    function _ensureCycleStartSnapshot(address user) internal {
+        if (cycleStartSnapshotCycle[user] < currentCycle) {
+            cycleStartBalance[user] = balanceOf[user]; // Balance before this tx = balance at cycle start
+            cycleStartSnapshotCycle[user] = currentCycle;
+        }
+    }
+
+    /**
+     * @notice Record the post-deposit balance as cycle start for new depositors.
+     *         Called AFTER mint to set start = first deposit amount (not 0).
+     */
+    function _updateCycleStartAfterDeposit(address user) internal {
+        // Only update if this is the user's first deposit in the cycle
+        // (cycleStartBalance was 0 before deposit)
+        if (cycleStartBalance[user] == 0 && balanceOf[user] > 0) {
+            cycleStartBalance[user] = balanceOf[user];
+        }
+    }
+
+    /**
+     * @notice Check if user is eligible for NFT (balance_end >= balance_start).
+     */
+    function isNFTEligible(address user) public view returns (bool) {
+        if (balanceOf[user] == 0) return false;
+        // If no snapshot for current cycle, user hasn't interacted → start = current (eligible)
+        if (cycleStartSnapshotCycle[user] < currentCycle) return true;
+        return balanceOf[user] >= cycleStartBalance[user];
+    }
 
     /**
      * @notice Update user's time-weighted checkpoint.
@@ -513,6 +557,9 @@ contract VaultTPB {
         globalLastBalance = totalSupply;
         globalLastTimestamp = block.timestamp;
 
+        // Snapshot all current holder balances as cycle start balances
+        // Note: for gas efficiency, individual snapshots happen lazily via _ensureCycleStartSnapshot
+
         emit CycleStarted(currentCycle, newATH, block.timestamp);
     }
 
@@ -553,6 +600,8 @@ contract VaultTPB {
     }
 
     function transfer(address to, uint256 amount) external returns (bool) {
+        _ensureCycleStartSnapshot(msg.sender);
+        _ensureCycleStartSnapshot(to);
         _updateCheckpoint(msg.sender);
         _updateCheckpoint(to);
         require(balanceOf[msg.sender] >= amount, "TPB: insufficient");
@@ -572,6 +621,8 @@ contract VaultTPB {
     }
 
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        _ensureCycleStartSnapshot(from);
+        _ensureCycleStartSnapshot(to);
         _updateCheckpoint(from);
         _updateCheckpoint(to);
         require(allowance[from][msg.sender] >= amount, "TPB: allowance");
@@ -715,8 +766,9 @@ contract VaultTPB {
         require(address(nftContract) != address(0), "TPB: no NFT contract");
         require(!cycleActive || currentCycle == 1, "TPB: cycle still active");
 
-        // Eligibility: user must have balance
+        // Eligibility: user must have balance AND balance_end >= balance_start
         require(balanceOf[user] > 0, "TPB: no position");
+        require(isNFTEligible(user), "TPB: balance decreased during cycle");
 
         nftContract.mintCycleNFT(user, currentCycle, tier);
     }
@@ -727,6 +779,7 @@ contract VaultTPB {
      */
     function getUserBonusMultiplier(address user) external view returns (uint256) {
         if (address(nftContract) == address(0)) return 10000;
+        if (!isNFTEligible(user)) return 10000; // No bonus if balance decreased
         return nftContract.getBonusMultiplier(user);
     }
 
