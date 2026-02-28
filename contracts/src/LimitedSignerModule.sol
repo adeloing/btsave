@@ -327,6 +327,19 @@ contract LimitedSignerModule {
         // R14 post-check: HF after (always checked, even for repay — ensures no regression)
         _checkHealthFactor();
 
+        // Volume tracking for borrow and swap operations
+        if (selector == 0xa415bcad) {  // Aave borrow
+            uint256 amount;
+            assembly { amount := mload(add(d, 68)) }  // Second uint256 parameter
+            require(dailyBorrowVolume + amount <= maxDailyBorrowVolume, "LSM: daily borrow limit exceeded");
+            dailyBorrowVolume += amount;
+        } else if (selector == 0x12aa3caf) {  // 1inch swap
+            uint256 amount;
+            assembly { amount := mload(add(d, 68)) }  // Second uint256 parameter  
+            require(dailySwapVolume + amount <= maxDailySwapVolume, "LSM: daily swap limit exceeded");
+            dailySwapVolume += amount;
+        }
+
         // F1: auto-reset emergency gas override after execution
         if (emergencyGasActive) {
             maxGasPrice = 80 gwei;
@@ -354,6 +367,7 @@ contract LimitedSignerModule {
         bytes4 sel = bytes4(data);
         // transfer(address,uint256) = 0xa9059cbb
         // transferFrom(address,address,uint256) = 0x23b872dd
+        // approve(address,uint256) = 0x095ea7b3
         if (sel == 0xa9059cbb) {
             address recipient;
             assembly { recipient := mload(add(data, 36)) }
@@ -362,6 +376,10 @@ contract LimitedSignerModule {
             address recipient;
             assembly { recipient := mload(add(data, 68)) }
             require(allowedTargets[recipient], "LSM: unauthorized token transfer");
+        } else if (sel == 0x095ea7b3) {
+            address spender;
+            assembly { spender := mload(add(data, 36)) }
+            require(allowedTargets[spender], "LSM: unauthorized token approval");
         }
     }
 
@@ -568,5 +586,25 @@ contract LimitedSignerModule {
     function emergencyHighGas() external onlySafe {
         maxGasPrice = type(uint256).max;
         emergencyGasActive = true;
+    }
+
+    /**
+     * @notice Record borrow volume manually (keeper/bot only).
+     *         Used when bot validates amounts off-chain.
+     */
+    function recordBorrowVolume(uint256 amount) external onlyKeeperOrBot {
+        _resetDailyIfNeeded();
+        require(dailyBorrowVolume + amount <= maxDailyBorrowVolume, "LSM: daily borrow limit exceeded");
+        dailyBorrowVolume += amount;
+    }
+
+    /**
+     * @notice Record swap volume manually (keeper/bot only).
+     *         Used when bot validates amounts off-chain.
+     */
+    function recordSwapVolume(uint256 amount) external onlyKeeperOrBot {
+        _resetDailyIfNeeded();
+        require(dailySwapVolume + amount <= maxDailySwapVolume, "LSM: daily swap limit exceeded");
+        dailySwapVolume += amount;
     }
 }

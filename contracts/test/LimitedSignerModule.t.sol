@@ -490,4 +490,98 @@ contract LimitedSignerModuleTest is Test {
         assertFalse(notOk);
         assertEq(reason, "LSM: borrow amount exceeded");
     }
+
+    // ===== R7: Approve Check =====
+    function test_R7_ApproveBlocked() public {
+        address mockToken = address(0x123);
+        address unauthorizedSpender = address(0x456);
+
+        vm.startPrank(address(safe));
+        module.setTarget(mockToken, true, bytes32(0));
+        module.setSelector(mockToken, bytes4(0x095ea7b3), true);
+        vm.stopPrank();
+
+        // Advance past cooldown
+        vm.warp(block.timestamp + 600);
+
+        bytes memory approveData = abi.encodeWithSelector(0x095ea7b3, unauthorizedSpender, 1000e6);
+
+        vm.prank(keeper);
+        bytes32 txHash = module.proposeTransaction(mockToken, approveData, 0);
+
+        _approveWith2Bots(txHash);
+
+        vm.expectRevert("LSM: unauthorized token approval");
+        vm.prank(keeper);
+        module.executeIfReady(txHash);
+    }
+
+    function test_R7_ApproveAllowed() public {
+        address mockToken = address(0x123);
+        address authorizedSpender = address(0x456);
+
+        vm.startPrank(address(safe));
+        module.setTarget(mockToken, true, bytes32(0));
+        module.setSelector(mockToken, bytes4(0x095ea7b3), true);
+        module.setTarget(authorizedSpender, true, bytes32(0));
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 600);
+
+        bytes memory approveData = abi.encodeWithSelector(0x095ea7b3, authorizedSpender, 1000e6);
+
+        vm.prank(keeper);
+        bytes32 txHash = module.proposeTransaction(mockToken, approveData, 0);
+
+        _approveWith2Bots(txHash);
+
+        vm.prank(keeper);
+        module.executeIfReady(txHash);
+    }
+
+    // ===== Daily Volume Tracking =====
+    function test_VolumeTracking_Manual() public {
+        vm.prank(keeper);
+        module.recordBorrowVolume(1000e6);
+        assertEq(module.dailyBorrowVolume(), 1000e6);
+
+        vm.prank(keeper);
+        module.recordSwapVolume(500e6);
+        assertEq(module.dailySwapVolume(), 500e6);
+
+        // Test limit exceeded
+        vm.expectRevert("LSM: daily borrow limit exceeded");
+        vm.prank(keeper);
+        module.recordBorrowVolume(62_400e6);
+    }
+
+    function test_VolumeTracking_AutomaticOnExecution() public {
+        address aaveTarget = address(0x123);
+
+        vm.startPrank(address(safe));
+        module.setTarget(aaveTarget, true, bytes32(0));
+        module.setSelector(aaveTarget, bytes4(0xa415bcad), true); // borrow
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 600); // past cooldown
+
+        bytes memory borrowData = abi.encodeWithSelector(
+            0xa415bcad,
+            address(0x111), // asset
+            1000e6,          // amount (tracked)
+            2,               // rateMode
+            uint16(0),       // referralCode
+            address(0x222)   // onBehalfOf
+        );
+
+        vm.prank(keeper);
+        bytes32 txHash = module.proposeTransaction(aaveTarget, borrowData, 0);
+
+        _approveWith2Bots(txHash);
+
+        vm.prank(keeper);
+        module.executeIfReady(txHash);
+
+        assertEq(module.dailyBorrowVolume(), 1000e6);
+    }
 }

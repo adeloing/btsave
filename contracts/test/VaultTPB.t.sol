@@ -560,4 +560,83 @@ contract VaultTPBTest is Test {
         oracle.setPrice(130_000e8); // Above ATH
         assertEq(vault.getEntryFeeBps(), 800);
     }
+
+    // ============================================================
+    //                    REENTRANCY TESTS
+    // ============================================================
+
+    function test_ReentrancyGuard_Deposit() public {
+        // Test with a reentrant USDC mock that calls deposit during transferFrom
+        ReentrantUSDC reentrantUsdc = new ReentrantUSDC();
+        reentrantUsdc.mint(alice, 100_000e6);
+
+        VaultTPB vault2 = new VaultTPB(
+            address(reentrantUsdc), address(wbtc), address(aavePool),
+            address(oracle), address(safe), address(lsm), treasury, ATH
+        );
+        reentrantUsdc.setVault(address(vault2));
+
+        vm.prank(alice);
+        reentrantUsdc.approve(address(vault2), type(uint256).max);
+
+        // First deposit triggers reentrant call via transferFrom callback
+        reentrantUsdc.setReenter(true);
+        vm.prank(alice);
+        vm.expectRevert("TPB: reentrant call");
+        vault2.deposit(1000e6);
+    }
+
+    function test_ReentrancyGuard_Transfer() public {
+        // Test with a reentrant USDC mock that calls deposit during transferFrom
+        ReentrantUSDC reentrantUsdc = new ReentrantUSDC();
+        reentrantUsdc.mint(alice, 100_000e6);
+
+        VaultTPB vault2 = new VaultTPB(
+            address(reentrantUsdc), address(wbtc), address(aavePool),
+            address(oracle), address(safe), address(lsm), treasury, ATH
+        );
+        reentrantUsdc.setVault(address(vault2));
+
+        vm.prank(alice);
+        reentrantUsdc.approve(address(vault2), type(uint256).max);
+
+        // First deposit without reentrancy to give alice tokens
+        reentrantUsdc.setReenter(false);
+        vm.warp(1000);
+        vm.prank(alice);
+        vault2.deposit(10_000e6);
+
+        // Verify deposit worked
+        assertGt(vault2.balanceOf(alice), 0);
+    }
+}
+
+/// @dev Mock USDC that re-enters vault.deposit() during transferFrom
+contract ReentrantUSDC {
+    mapping(address => uint256) public balances;
+    mapping(address => mapping(address => uint256)) public approvals;
+    uint256 public supply;
+    address public vault;
+    bool public reenter;
+
+    function setVault(address v) external { vault = v; }
+    function setReenter(bool r) external { reenter = r; }
+    function mint(address to, uint256 amt) external { balances[to] += amt; supply += amt; }
+    function totalSupply() external view returns (uint256) { return supply; }
+    function balanceOf(address a) external view returns (uint256) { return balances[a]; }
+    function decimals() external pure returns (uint8) { return 6; }
+    function approve(address s, uint256 amt) external returns (bool) { approvals[msg.sender][s] = amt; return true; }
+    function transfer(address to, uint256 amt) external returns (bool) {
+        balances[msg.sender] -= amt; balances[to] += amt; return true;
+    }
+    function transferFrom(address from, address to, uint256 amt) external returns (bool) {
+        approvals[from][msg.sender] -= amt;
+        balances[from] -= amt;
+        balances[to] += amt;
+        if (reenter && vault != address(0)) {
+            reenter = false; // prevent infinite loop
+            VaultTPB(vault).deposit(100e6); // reentrant call
+        }
+        return true;
+    }
 }

@@ -109,6 +109,9 @@ contract VaultTPB {
     address public treasury;
     uint256 public treasuryAccrued;
 
+    // --- Reentrancy Guard ---
+    bool private _locked;
+
     // ============================================================
     //                        EVENTS
     // ============================================================
@@ -144,6 +147,13 @@ contract VaultTPB {
     modifier whenCycleActive() {
         require(cycleActive, "TPB: cycle not active");
         _;
+    }
+
+    modifier nonReentrant() {
+        require(!_locked, "TPB: reentrant call");
+        _locked = true;
+        _;
+        _locked = false;
     }
 
     // ============================================================
@@ -188,7 +198,7 @@ contract VaultTPB {
      *         Entry fees applied if price is near ATH (anti-abuse).
      *         Funds go to pending pool until next rebalance.
      */
-    function deposit(uint256 usdcAmount) external whenCycleActive {
+    function deposit(uint256 usdcAmount) external nonReentrant whenCycleActive {
         require(usdcAmount > 0, "TPB: zero deposit");
 
         // Calculate entry fee
@@ -339,7 +349,7 @@ contract VaultTPB {
      *         Can be called weekly or when pool > 2% TVL.
      *         Only keeper or Safe can trigger.
      */
-    function rebalancePendingPool() external {
+    function rebalancePendingPool() external nonReentrant {
         require(
             lsm.allowedKeepers(msg.sender) || msg.sender == safe,
             "TPB: unauthorized"
@@ -426,7 +436,7 @@ contract VaultTPB {
     /**
      * @notice Human owners validate and execute the unwind within timelock.
      */
-    function executeUnwind() external onlySafe {
+    function executeUnwind() external nonReentrant onlySafe {
         require(unwindPending, "TPB: no pending unwind");
 
         _performUnwind();
@@ -437,7 +447,7 @@ contract VaultTPB {
      * @notice Auto-execute unwind if timelock expired without human validation.
      *         Fail-safe: anyone can call after timelock.
      */
-    function autoExecuteUnwind() external {
+    function autoExecuteUnwind() external nonReentrant {
         require(unwindPending, "TPB: no pending unwind");
         require(
             block.timestamp >= unwindProposedAt + TIMELOCK_DURATION,
@@ -599,7 +609,7 @@ contract VaultTPB {
         emit Transfer(from, address(0), amount);
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(address to, uint256 amount) external nonReentrant returns (bool) {
         _ensureCycleStartSnapshot(msg.sender);
         _ensureCycleStartSnapshot(to);
         _updateCheckpoint(msg.sender);
@@ -620,7 +630,7 @@ contract VaultTPB {
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) external nonReentrant returns (bool) {
         _ensureCycleStartSnapshot(from);
         _ensureCycleStartSnapshot(to);
         _updateCheckpoint(from);
