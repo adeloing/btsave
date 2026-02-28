@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Turbo Paper Boat — Bitcoin Yield. Protected. Rewarded.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0a;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .card {
+    position: relative;
+    width: 420px;
+    max-width: 95vw;
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid rgba(255,165,0,0.25);
+    box-shadow: 0 0 60px rgba(255,140,0,0.12), 0 0 120px rgba(0,0,0,0.8);
+    background: #111;
+  }
+
+  /* Connect Wallet button */
+  .connect-btn {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 10;
+    background: linear-gradient(135deg, #e88a1a 0%, #d46800 100%);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 8px 16px;
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+    box-shadow: 0 2px 12px rgba(232,138,26,0.35);
+  }
+  .connect-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(232,138,26,0.5);
+    background: linear-gradient(135deg, #f09a2a 0%, #e07800 100%);
+  }
+  .connect-btn svg { width: 14px; height: 14px; }
+
+  /* Hero image with green-dollar tint overlay */
+  .hero-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 0.62;
+    overflow: hidden;
+  }
+  .hero-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  /* Green dollar tint on the bottom half (the bills/sea area) */
+  .hero-wrap::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 55%;
+    background: linear-gradient(
+      to bottom,
+      rgba(34, 120, 50, 0) 0%,
+      rgba(34, 120, 50, 0.18) 30%,
+      rgba(26, 100, 42, 0.28) 60%,
+      rgba(20, 80, 35, 0.22) 100%
+    );
+    pointer-events: none;
+    mix-blend-mode: color;
+  }
+
+  /* Metrics bar */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    background: rgba(0,0,0,0.85);
+    border-top: 1px solid rgba(255,165,0,0.15);
+    padding: 16px 8px;
+    gap: 4px;
+  }
+  .metric {
+    text-align: center;
+    padding: 8px 4px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.03);
+    transition: background 0.2s;
+  }
+  .metric:hover {
+    background: rgba(255,165,0,0.08);
+  }
+  .metric-value {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 18px;
+    color: #f0a020;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .metric-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.55);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-top: 4px;
+  }
+
+  /* Responsive */
+  @media (max-width: 440px) {
+    .card { border-radius: 12px; }
+    .metrics { padding: 12px 4px; gap: 2px; }
+    .metric-value { font-size: 14px; }
+    .metric-label { font-size: 8px; }
+    .connect-btn { padding: 6px 10px; font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <!-- Connect Wallet -->
+  <button class="connect-btn" id="connectBtn" onclick="connectWallet()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="6" width="20" height="14" rx="2"/>
+      <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
+      <path d="M2 10h20"/>
+    </svg>
+    <span id="btnText">Connect Wallet</span>
+  </button>
+
+  <!-- Hero illustration -->
+  <div class="hero-wrap">
+    <img src="tpb-hero-cropped.jpg" alt="Turbo Paper Boat — orange paper boat on a sea of dollar bills">
+  </div>
+
+  <!-- Metrics bar: 6 metrics -->
+  <div class="metrics">
+    <div class="metric" data-metric="current-step">
+      <div class="metric-value" id="currentStep">3</div>
+      <div class="metric-label">Current Step</div>
+    </div>
+    <div class="metric" data-metric="total-steps">
+      <div class="metric-value" id="totalSteps">12</div>
+      <div class="metric-label">Steps Hit</div>
+    </div>
+    <div class="metric" data-metric="tvl">
+      <div class="metric-value" id="tvl">$12.4M</div>
+      <div class="metric-label">TVL</div>
+    </div>
+    <div class="metric" data-metric="apy">
+      <div class="metric-value" id="apy">28.5%</div>
+      <div class="metric-label">APY</div>
+    </div>
+    <div class="metric" data-metric="cycles">
+      <div class="metric-value" id="cycles">7</div>
+      <div class="metric-label">Cycles</div>
+    </div>
+    <div class="metric" data-metric="nfts">
+      <div class="metric-value" id="nfts">342</div>
+      <div class="metric-label">NFTs Minted</div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function connectWallet() {
+  const btn = document.getElementById('connectBtn');
+  const txt = document.getElementById('btnText');
+
+  if (typeof window.ethereum === 'undefined') {
+    window.open('https://metamask.io/download/', '_blank');
+    return;
+  }
+
+  try {
+    txt.textContent = 'Connecting…';
+    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const addr = accounts[0];
+    txt.textContent = addr.slice(0, 6) + '…' + addr.slice(-4);
+    btn.style.background = 'linear-gradient(135deg, #1a7a2e 0%, #0d5a1a 100%)';
+    btn.style.boxShadow = '0 2px 12px rgba(26,122,46,0.4)';
+  } catch (e) {
+    txt.textContent = 'Connect Wallet';
+  }
+}
+</script>
+
+</body>
+</html>
