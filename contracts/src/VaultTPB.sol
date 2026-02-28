@@ -1,601 +1,333 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "./LimitedSignerModule.sol";
-import "./NFTBonus.sol";
-
 /**
- * @title VaultTPB — Turbo Paper Boat Vault
- * @notice ERC-4626-inspired vault for aggressive BTC accumulation strategy.
- *         Manages cycles (ATH → ATH), time-weighted gains, auto-redeem,
- *         pending pool, and entry protection.
+ * @title VaultTPB v2 — Turbo Paper Boat Vault
+ * @notice Simplified BTC accumulation vault with transferable TPB token.
  *
- * Strategy split: 82% WBTC (Aave) / 15% USDC (Aave) / 3% USDC (Deribit)
+ *  Flow:
+ *   1. User deposits WBTC → receives TPB (1 WBTC = 1e8 TPB, satoshi-pegged)
+ *   2. WBTC sits in pending pool until weekly rebalance deploys it into strategy
+ *   3. TPB is freely transferable / tradable on DEX
+ *   4. At cycle end (new ATH ratcheté): bonus TPB minted pro-rata to holders
+ *   5. Redemption: burn TPB → WBTC, only at step 0 (post-ATH, pre-lock)
+ *   6. Auto-redeem: user sets % to auto-redeem at next ATH reset
+ *   7. NFT bonus multiplier on reward mint
  *
- * @dev Priority 1 implementation: Auto-Redeem + Time-weighted + Pending Pool
+ *  Cycle: ATH → ATH (ratcheté). Lock at ATH - 5%.
  */
 
-// Minimal ERC-20 interface
-interface IERC20 {
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address) external view returns (uint256);
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function decimals() external view returns (uint8);
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
+
+interface INFTBonus {
+    function getBonusMultiplier(address user) external view returns (uint256);
 }
 
 contract VaultTPB {
-    // ============================================================
-    //                        CONSTANTS
-    // ============================================================
-
-    uint256 public constant SPLIT_WBTC_BPS = 8200;   // 82%
-    uint256 public constant SPLIT_USDC_AAVE_BPS = 1500; // 15%
-    uint256 public constant SPLIT_USDC_DERIBIT_BPS = 300; // 3%
-    uint256 public constant BPS = 10000;
-    uint256 public constant MIN_NFT_DEPOSIT = 100e6;  // 100 USDC (6 decimals)
-    uint256 public constant TIMELOCK_DURATION = 25 minutes;
-    uint256 public constant LOCK_THRESHOLD_BPS = 500;  // ATH - 5%
-    uint256 public constant PENDING_REBALANCE_THRESHOLD_BPS = 200; // 2% of TVL
-
-    // Entry protection fee tiers
-    uint256 public constant ENTRY_FEE_TIER1_BPS = 200;  // 2% (ATH-3% to ATH-1.5%)
-    uint256 public constant ENTRY_FEE_TIER2_BPS = 500;  // 5% (ATH-1.5% to ATH)
-    uint256 public constant ENTRY_FEE_TIER3_BPS = 800;  // 8% (above ATH)
-
-    // ============================================================
-    //                        STATE
-    // ============================================================
-
-    // --- Core ---
-    IERC20 public immutable usdc;
-    IERC20 public immutable wbtc;
-    IAavePool public immutable aavePool;
-    IChainlinkAggregator public immutable btcOracle;
-    address public immutable safe; // Gnosis Safe (2/2 human)
-    LimitedSignerModule public immutable lsm;
-
-    // --- TPB Token (internal ERC-20) ---
+    // ================================================================
+    // ERC-20: TPB Token (inline, no inheritance needed)
+    // ================================================================
     string public constant name = "Turbo Paper Boat";
     string public constant symbol = "TPB";
-    uint8 public constant decimals = 18;
+    uint8 public constant decimals = 8; // same as WBTC
+
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    // --- Cycle State ---
-    uint256 public currentCycle;
-    uint256 public cycleStartTime;
-    uint256 public cycleATH;          // ATH ratcheted for current cycle
-    bool public cycleActive;
-    bool public redemptionWindowOpen;
-
-    // --- Unwind ---
-    bytes32 public pendingUnwindHash;
-    uint256 public unwindProposedAt;
-    bool public unwindPending;
-
-    // --- Auto-Redeem ---
-    mapping(address => uint256) public autoRedeemPct; // 0-100 (%)
-
-    // --- Time-Weighted Accounting ---
-    struct UserCheckpoint {
-        uint256 balance;
-        uint256 timestamp;
-        uint256 weightedSum;    // cumulative balance × time
-    }
-    mapping(address => UserCheckpoint) public userCheckpoints;
-    uint256 public globalWeightedSum;
-    uint256 public globalLastBalance;
-    uint256 public globalLastTimestamp;
-
-    // --- Pending Pool ---
-    uint256 public pendingPoolBalance;  // USDC not yet rebalanced
-    uint256 public lastRebalanceTime;
-
-    // --- Cycle Start Balances (for NFT eligibility: balance_end >= balance_start) ---
-    mapping(address => uint256) public cycleStartBalance;
-    mapping(address => uint256) public cycleStartSnapshotCycle; // which cycle was snapshotted
-
-    // --- Auto-Redeem Registry ---
-    address[] public autoRedeemUsers;  // Users with autoRedeemPct > 0
-    mapping(address => bool) public isAutoRedeemRegistered;
-
-    // --- NFT Bonus ---
-    NFTBonus public nftContract;
-
-    // --- Treasury ---
-    address public treasury;
-    uint256 public treasuryAccrued;
-
-    // --- Reentrancy Guard ---
-    bool private _locked;
-
-    // ============================================================
-    //                        EVENTS
-    // ============================================================
-
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Deposit(address indexed user, uint256 usdcAmount, uint256 tpbMinted, uint256 entryFee);
-    event AutoRedeemSet(address indexed user, uint256 percent);
-    event AutoRedeemExecuted(address indexed user, uint256 percent, uint256 wbtcAmount);
-    event CycleStarted(uint256 indexed cycle, uint256 ath, uint256 timestamp);
-    event CycleEnded(uint256 indexed cycle, uint256 timestamp, uint256 totalGains);
-    event UnwindProposed(bytes32 txHash, uint256 executeAfter);
-    event UnwindExecuted(uint256 indexed cycle);
-    event UnwindAutoExecuted(uint256 indexed cycle, string reason);
-    event LockActivated(uint256 price, uint256 athThreshold);
-    event PendingPoolRebalanced(uint256 amount, uint256 timestamp);
-    event CheckpointUpdated(address indexed user, uint256 balance, uint256 weightedSum);
 
-    // ============================================================
-    //                       MODIFIERS
-    // ============================================================
+    // ================================================================
+    // Vault State
+    // ================================================================
+    IERC20 public immutable wbtc;
+    address public safe;           // Gnosis Safe (strategy executor)
+    address public keeper;         // Bot / keeper for rebalance & cycle ops
+    INFTBonus public nftBonus;     // Optional NFT bonus contract
 
-    modifier onlySafe() {
-        require(msg.sender == safe, "TPB: only Safe");
+    // Cycle
+    uint256 public currentATH;           // in USD (8 decimals like Chainlink)
+    uint256 public cycleStartTime;
+    uint256 public cycleNumber;
+    uint256 public currentStep;          // 0 = post-ATH, increments on drops
+    bool public locked;                  // true when price hits ATH - 5%
+    uint256 public constant LOCK_THRESHOLD_BPS = 500; // 5%
+
+    // Pending pool
+    uint256 public pendingWBTC;          // WBTC awaiting rebalance
+    uint256 public constant REBALANCE_THRESHOLD_BPS = 200; // 2% of deployed TVL
+    uint256 public lastRebalanceTime;
+
+    // Auto-redeem
+    mapping(address => uint256) public autoRedeemBPS; // 0-10000
+    uint256 public constant MAX_BPS = 10_000;
+
+    // Reentrancy guard
+    bool private _locked;
+
+    // ================================================================
+    // Access Control
+    // ================================================================
+    address public owner; // 2/2 Safe for admin ops
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "TPB: not owner");
         _;
     }
 
     modifier onlyKeeper() {
-        require(lsm.allowedKeepers(msg.sender), "TPB: only keeper");
-        _;
-    }
-
-    modifier whenCycleActive() {
-        require(cycleActive, "TPB: cycle not active");
+        require(msg.sender == keeper || msg.sender == owner, "TPB: not keeper");
         _;
     }
 
     modifier nonReentrant() {
-        require(!_locked, "TPB: reentrant call");
+        require(!_locked, "TPB: reentrant");
         _locked = true;
         _;
         _locked = false;
     }
 
-    // ============================================================
-    //                      CONSTRUCTOR
-    // ============================================================
-
+    // ================================================================
+    // Constructor
+    // ================================================================
     constructor(
-        address _usdc,
         address _wbtc,
-        address _aavePool,
-        address _btcOracle,
         address _safe,
-        address _lsm,
-        address _treasury,
-        uint256 _initialATH
+        address _keeper,
+        uint256 _initialATH // e.g. 126000e8 for $126,000
     ) {
-        usdc = IERC20(_usdc);
         wbtc = IERC20(_wbtc);
-        aavePool = IAavePool(_aavePool);
-        btcOracle = IChainlinkAggregator(_btcOracle);
         safe = _safe;
-        lsm = LimitedSignerModule(_lsm);
-        treasury = _treasury;
-
-        cycleATH = _initialATH;
-        currentCycle = 1;
+        keeper = _keeper;
+        owner = msg.sender;
+        currentATH = _initialATH;
         cycleStartTime = block.timestamp;
-        cycleActive = true;
-        redemptionWindowOpen = false;
+        cycleNumber = 1;
+        currentStep = 0;
+        locked = false;
         lastRebalanceTime = block.timestamp;
-        globalLastTimestamp = block.timestamp;
-
-        emit CycleStarted(1, _initialATH, block.timestamp);
     }
 
-    // ============================================================
-    //                    DEPOSIT (Priority 1)
-    // ============================================================
+    // ================================================================
+    // Deposit: WBTC → TPB (1:1 in sats)
+    // ================================================================
+    event Deposited(address indexed user, uint256 wbtcAmount, uint256 tpbMinted);
 
-    /**
-     * @notice Deposit USDC into the vault. TPB tokens minted at current NAV.
-     *         Entry fees applied if price is near ATH (anti-abuse).
-     *         Funds go to pending pool until next rebalance.
-     */
-    function deposit(uint256 usdcAmount) external nonReentrant whenCycleActive {
-        require(usdcAmount > 0, "TPB: zero deposit");
+    function deposit(uint256 wbtcAmount) external nonReentrant {
+        require(wbtcAmount > 0, "TPB: zero deposit");
 
-        // Calculate entry fee
-        uint256 fee = _calculateEntryFee(usdcAmount);
-        uint256 netAmount = usdcAmount - fee;
-
-        // Transfer USDC from user
-        require(usdc.transferFrom(msg.sender, address(this), usdcAmount), "TPB: transfer failed");
-
-        // Accrue fee to treasury
-        if (fee > 0) {
-            treasuryAccrued += fee;
-        }
-
-        // Mint TPB tokens based on current NAV
-        uint256 tpbToMint = _usdcToTPB(netAmount);
-
-        // Snapshot cycle start balance (lazy, first interaction in cycle)
-        _ensureCycleStartSnapshot(msg.sender);
-
-        // Update time-weighted checkpoint BEFORE mint (captures pre-balance)
-        _updateCheckpoint(msg.sender);
-
-        _mint(msg.sender, tpbToMint);
-
-        // Update checkpoint balance to reflect new mint
-        userCheckpoints[msg.sender].balance = balanceOf[msg.sender];
-        // Update global tracking
-        globalLastBalance = totalSupply;
-
-        // For new depositors: set cycle start to post-deposit balance
-        _updateCycleStartAfterDeposit(msg.sender);
+        // Transfer WBTC to vault
+        require(wbtc.transferFrom(msg.sender, address(this), wbtcAmount), "TPB: transfer failed");
 
         // Add to pending pool
-        pendingPoolBalance += netAmount;
+        pendingWBTC += wbtcAmount;
 
-        emit Deposit(msg.sender, usdcAmount, tpbToMint, fee);
+        // Mint TPB 1:1 (both are 8 decimals)
+        _mint(msg.sender, wbtcAmount);
+
+        emit Deposited(msg.sender, wbtcAmount, wbtcAmount);
     }
 
-    // ============================================================
-    //              AUTO-REDEEM AT NEXT ATH (Priority 1)
-    // ============================================================
+    // ================================================================
+    // Redeem: TPB → WBTC (only step 0, unlocked)
+    // ================================================================
+    event Redeemed(address indexed user, uint256 tpbBurned, uint256 wbtcReturned);
 
-    /**
-     * @notice Set percentage to auto-redeem in WBTC at next ATH.
-     * @param percent 0 to 100
-     */
-    function setAutoRedeemAtNextATH(uint256 percent) external {
-        require(percent <= 100, "TPB: max 100%");
-        require(balanceOf[msg.sender] > 0, "TPB: no position");
+    function redeem(uint256 tpbAmount) external nonReentrant {
+        require(tpbAmount > 0, "TPB: zero redeem");
+        require(currentStep == 0, "TPB: not at step 0");
+        require(!locked, "TPB: locked");
+        require(balanceOf[msg.sender] >= tpbAmount, "TPB: insufficient balance");
 
-        // Track user in registry
-        if (percent > 0 && !isAutoRedeemRegistered[msg.sender]) {
-            autoRedeemUsers.push(msg.sender);
-            isAutoRedeemRegistered[msg.sender] = true;
-        }
+        // Calculate WBTC to return: pro-rata of vault's WBTC holdings
+        uint256 vaultWBTC = wbtc.balanceOf(address(this));
+        uint256 wbtcOut = (tpbAmount * vaultWBTC) / totalSupply;
+        require(wbtcOut > 0, "TPB: zero output");
 
-        autoRedeemPct[msg.sender] = percent;
-        emit AutoRedeemSet(msg.sender, percent);
+        // Burn TPB
+        _burn(msg.sender, tpbAmount);
+
+        // Transfer WBTC
+        require(wbtc.transfer(msg.sender, wbtcOut), "TPB: transfer failed");
+
+        emit Redeemed(msg.sender, tpbAmount, wbtcOut);
     }
 
-    // ============================================================
-    //            TIME-WEIGHTED ACCOUNTING (Priority 1)
-    // ============================================================
+    // ================================================================
+    // Auto-Redeem Configuration
+    // ================================================================
+    event AutoRedeemSet(address indexed user, uint256 bps);
 
-    /**
-     * @notice Lazy snapshot: record user's balance at cycle start (first interaction in new cycle).
-     *         For existing holders: captures pre-interaction balance (= their balance at cycle start).
-     *         Must be called BEFORE any balance change in the tx.
-     */
-    function _ensureCycleStartSnapshot(address user) internal {
-        if (cycleStartSnapshotCycle[user] < currentCycle) {
-            cycleStartBalance[user] = balanceOf[user]; // Balance before this tx = balance at cycle start
-            cycleStartSnapshotCycle[user] = currentCycle;
-        }
+    function setAutoRedeem(uint256 bps) external {
+        require(bps <= MAX_BPS, "TPB: bps > 10000");
+        autoRedeemBPS[msg.sender] = bps;
+        emit AutoRedeemSet(msg.sender, bps);
     }
 
-    /**
-     * @notice Record the post-deposit balance as cycle start for new depositors.
-     *         Called AFTER mint to set start = first deposit amount (not 0).
-     */
-    function _updateCycleStartAfterDeposit(address user) internal {
-        // Only update if this is the user's first deposit in the cycle
-        // (cycleStartBalance was 0 before deposit)
-        if (cycleStartBalance[user] == 0 && balanceOf[user] > 0) {
-            cycleStartBalance[user] = balanceOf[user];
-        }
-    }
+    // ================================================================
+    // Pending Pool Rebalance (weekly or threshold)
+    // ================================================================
+    event Rebalanced(uint256 wbtcDeployed);
 
-    /**
-     * @notice Check if user is eligible for NFT (balance_end >= balance_start).
-     */
-    function isNFTEligible(address user) public view returns (bool) {
-        if (balanceOf[user] == 0) return false;
-        // If no snapshot for current cycle, user hasn't interacted → start = current (eligible)
-        if (cycleStartSnapshotCycle[user] < currentCycle) return true;
-        return balanceOf[user] >= cycleStartBalance[user];
-    }
+    function rebalancePendingPool() external onlyKeeper nonReentrant {
+        require(pendingWBTC > 0, "TPB: nothing pending");
 
-    /**
-     * @notice Update user's time-weighted checkpoint.
-     *         Called on every balance change (deposit, transfer, withdraw).
-     */
-    function _updateCheckpoint(address user) internal {
-        UserCheckpoint storage cp = userCheckpoints[user];
-        uint256 elapsed = block.timestamp - cp.timestamp;
+        uint256 deployedTVL = wbtc.balanceOf(address(this)) - pendingWBTC;
+        bool thresholdMet = deployedTVL > 0 &&
+            (pendingWBTC * MAX_BPS) / deployedTVL >= REBALANCE_THRESHOLD_BPS;
+        bool weeklyDue = block.timestamp >= lastRebalanceTime + 7 days;
 
-        if (cp.timestamp > 0 && elapsed > 0) {
-            cp.weightedSum += cp.balance * elapsed;
-        }
+        require(thresholdMet || weeklyDue, "TPB: rebalance not due");
 
-        cp.balance = balanceOf[user];
-        cp.timestamp = block.timestamp;
-
-        // Update global
-        uint256 globalElapsed = block.timestamp - globalLastTimestamp;
-        if (globalElapsed > 0) {
-            globalWeightedSum += globalLastBalance * globalElapsed;
-        }
-        globalLastBalance = totalSupply;
-        globalLastTimestamp = block.timestamp;
-
-        emit CheckpointUpdated(user, cp.balance, cp.weightedSum);
-    }
-
-    /**
-     * @notice Get user's time-weighted share for current cycle.
-     * @return sharesBps User's share in BPS (0-10000)
-     */
-    function getUserTimeWeightedShare(address user) public view returns (uint256 sharesBps) {
-        UserCheckpoint memory cp = userCheckpoints[user];
-        uint256 elapsed = block.timestamp - cp.timestamp;
-        uint256 userWeighted = cp.weightedSum + (cp.balance * elapsed);
-
-        uint256 globalElapsed = block.timestamp - globalLastTimestamp;
-        uint256 globalTotal = globalWeightedSum + (globalLastBalance * globalElapsed);
-
-        if (globalTotal == 0) return 0;
-        return (userWeighted * BPS) / globalTotal;
-    }
-
-    // ============================================================
-    //              PENDING POOL REBALANCE (Priority 1)
-    // ============================================================
-
-    /**
-     * @notice Rebalance pending pool into strategy (82/15/3).
-     *         Can be called weekly or when pool > 2% TVL.
-     *         Only keeper or Safe can trigger.
-     */
-    function rebalancePendingPool() external nonReentrant {
-        require(
-            lsm.allowedKeepers(msg.sender) || msg.sender == safe,
-            "TPB: unauthorized"
-        );
-        require(pendingPoolBalance > 0, "TPB: nothing to rebalance");
-
-        // Check conditions: weekly OR threshold (compare pending vs deployed assets, not total)
-        bool weeklyOk = block.timestamp >= lastRebalanceTime + 7 days;
-        uint256 deployedAssets = _totalAssets() - pendingPoolBalance;
-        bool thresholdOk = deployedAssets > 0 && pendingPoolBalance * BPS >= deployedAssets * PENDING_REBALANCE_THRESHOLD_BPS;
-        require(weeklyOk || thresholdOk, "TPB: conditions not met");
-
-        uint256 amount = pendingPoolBalance;
-        pendingPoolBalance = 0;
+        uint256 amount = pendingWBTC;
+        pendingWBTC = 0;
         lastRebalanceTime = block.timestamp;
 
-        // Split: 82% → WBTC (via swap), 15% → USDC Aave supply, 3% → Deribit
-        // Actual execution delegated to LSM/keeper proposals
-        // This function marks the pool as "ready for rebalance"
-        // The keeper will propose the actual swap/supply txs via LSM
+        // Transfer WBTC to Safe for strategy deployment
+        require(wbtc.transfer(safe, amount), "TPB: transfer to safe failed");
 
-        emit PendingPoolRebalanced(amount, block.timestamp);
+        emit Rebalanced(amount);
     }
 
-    // ============================================================
-    //                 ENTRY PROTECTION (Priority 2)
-    // ============================================================
+    // ================================================================
+    // Cycle Management
+    // ================================================================
+    event StepChanged(uint256 newStep);
+    event Locked();
+    event Unlocked();
+    event CycleEnded(uint256 cycleNumber, uint256 rewardTPBMinted);
+    event AutoRedeemExecuted(address indexed user, uint256 tpbBurned, uint256 wbtcReturned);
 
-    /**
-     * @notice Calculate entry fee based on distance to ATH.
-     */
-    function _calculateEntryFee(uint256 amount) internal view returns (uint256) {
-        uint256 price = _getBTCPrice();
-
-        // ATH - 3% threshold
-        uint256 tier1Start = cycleATH * 9700 / BPS;  // ATH - 3%
-        uint256 tier2Start = cycleATH * 9850 / BPS;  // ATH - 1.5%
-
-        if (price < tier1Start) {
-            return 0; // No fee below ATH - 3%
-        } else if (price < tier2Start) {
-            return amount * ENTRY_FEE_TIER1_BPS / BPS; // 2%
-        } else if (price < cycleATH) {
-            return amount * ENTRY_FEE_TIER2_BPS / BPS; // 5%
-        } else {
-            return amount * ENTRY_FEE_TIER3_BPS / BPS; // 8%
-        }
+    /// @notice Move to next step (price dropped another step_size)
+    function advanceStep() external onlyKeeper {
+        currentStep++;
+        emit StepChanged(currentStep);
     }
 
-    /**
-     * @notice View function: get current entry fee tier.
-     */
-    function getEntryFeeBps() external view returns (uint256) {
-        uint256 price = _getBTCPrice();
-        uint256 tier1Start = cycleATH * 9700 / BPS;
-        uint256 tier2Start = cycleATH * 9850 / BPS;
-
-        if (price < tier1Start) return 0;
-        if (price < tier2Start) return ENTRY_FEE_TIER1_BPS;
-        if (price < cycleATH) return ENTRY_FEE_TIER2_BPS;
-        return ENTRY_FEE_TIER3_BPS;
+    /// @notice Set step back (price recovered)
+    function setStep(uint256 step) external onlyKeeper {
+        currentStep = step;
+        emit StepChanged(step);
     }
 
-    // ============================================================
-    //              FULL UNWIND + CYCLE RESET (Priority 3)
-    // ============================================================
-
-    /**
-     * @notice Keeper proposes full unwind when new ATH detected.
-     *         Starts 25-minute timelock for human validation.
-     */
-    function proposeUnwind() external onlyKeeper {
-        uint256 price = _getBTCPrice();
-        require(price >= cycleATH, "TPB: not at ATH");
-        require(!unwindPending, "TPB: unwind already pending");
-
-        unwindPending = true;
-        unwindProposedAt = block.timestamp;
-        redemptionWindowOpen = true;
-
-        emit UnwindProposed(bytes32(0), block.timestamp + TIMELOCK_DURATION);
+    /// @notice Lock redemptions (price hit ATH - 5%)
+    function lockVault() external onlyKeeper {
+        require(!locked, "TPB: already locked");
+        locked = true;
+        emit Locked();
     }
 
-    /**
-     * @notice Human owners validate and execute the unwind within timelock.
-     */
-    function executeUnwind() external nonReentrant onlySafe {
-        require(unwindPending, "TPB: no pending unwind");
-
-        _performUnwind();
-        emit UnwindExecuted(currentCycle);
+    /// @notice Unlock redemptions (back at step 0 post-ATH)
+    function unlockVault() external onlyKeeper {
+        require(locked, "TPB: not locked");
+        locked = false;
+        currentStep = 0;
+        emit Unlocked();
     }
 
-    /**
-     * @notice Auto-execute unwind if timelock expired without human validation.
-     *         Fail-safe: anyone can call after timelock.
-     */
-    function autoExecuteUnwind() external nonReentrant {
-        require(unwindPending, "TPB: no pending unwind");
-        require(
-            block.timestamp >= unwindProposedAt + TIMELOCK_DURATION,
-            "TPB: timelock not expired"
-        );
+    /// @notice End cycle and distribute rewards
+    /// @param newATH New ATH price (must be > current)
+    /// @param rewardSats Total reward in satoshis to mint as bonus TPB
+    /// @param holders Array of holder addresses to process auto-redeem
+    function endCycleAndReward(
+        uint256 newATH,
+        uint256 rewardSats,
+        address[] calldata holders
+    ) external onlyKeeper nonReentrant {
+        require(newATH > currentATH, "TPB: ATH not higher");
+        require(currentStep == 0, "TPB: not at step 0");
 
-        _performUnwind();
-        emit UnwindAutoExecuted(currentCycle, "timelock expired - auto executed");
-    }
+        uint256 supplySnapshot = totalSupply;
+        uint256 totalRewardMinted = 0;
 
-    function _performUnwind() internal {
-        // 1. Process auto-redeems with pro-rata if needed
-        _processAutoRedeems();
+        // Mint reward TPB pro-rata to all holders
+        if (rewardSats > 0 && supplySnapshot > 0) {
+            for (uint256 i = 0; i < holders.length; i++) {
+                address holder = holders[i];
+                uint256 bal = balanceOf[holder];
+                if (bal == 0) continue;
 
-        // 2. Reset cycle
-        unwindPending = false;
-        cycleActive = false;
+                // Base reward: pro-rata
+                uint256 reward = (rewardSats * bal) / supplySnapshot;
 
-        emit CycleEnded(currentCycle, block.timestamp, 0);
-    }
-
-    /**
-     * @notice Process all auto-redeems at unwind. WBTC only.
-     *         If total demand > available WBTC, pro-rata distribution.
-     *         Remainder stays in vault for next cycle.
-     */
-    function _processAutoRedeems() internal {
-        uint256 availableWBTC = wbtc.balanceOf(address(this));
-        if (availableWBTC == 0) return;
-
-        // Phase 1: Calculate total demand in WBTC
-        uint256 totalDemandWBTC = 0;
-        uint256 len = autoRedeemUsers.length;
-
-        // Temp arrays for batch processing
-        uint256[] memory demands = new uint256[](len);
-
-        for (uint256 i = 0; i < len; i++) {
-            address user = autoRedeemUsers[i];
-            uint256 pct = autoRedeemPct[user];
-            if (pct == 0 || balanceOf[user] == 0) continue;
-
-            // User's share of vault in WBTC terms
-            uint256 userTPB = balanceOf[user] * pct / 100;
-            uint256 userUSDC = _tpbToUSDC(userTPB);
-            uint256 btcPrice = _getBTCPrice(); // 8 decimals
-            // Convert USDC (6 dec) to WBTC (8 dec): usdc * 1e8 / price * 1e2
-            uint256 userWBTC = userUSDC * 1e10 / btcPrice;
-
-            demands[i] = userWBTC;
-            totalDemandWBTC += userWBTC;
-        }
-
-        if (totalDemandWBTC == 0) return;
-
-        // Phase 2: Distribute (pro-rata if demand > available)
-        bool proRata = totalDemandWBTC > availableWBTC;
-
-        for (uint256 i = 0; i < len; i++) {
-            address user = autoRedeemUsers[i];
-            if (demands[i] == 0) continue;
-
-            uint256 toSend;
-            if (proRata) {
-                toSend = demands[i] * availableWBTC / totalDemandWBTC;
-            } else {
-                toSend = demands[i];
-            }
-
-            if (toSend > 0) {
-                // Burn proportional TPB
-                uint256 pct = autoRedeemPct[user];
-                uint256 tpbToBurn = balanceOf[user] * pct / 100;
-                if (proRata) {
-                    // Only burn proportion that was actually redeemed
-                    tpbToBurn = tpbToBurn * toSend / demands[i];
+                // NFT bonus multiplier (10000 = 1x, 12000 = 1.2x)
+                if (address(nftBonus) != address(0)) {
+                    uint256 multiplier = nftBonus.getBonusMultiplier(holder);
+                    if (multiplier > MAX_BPS) {
+                        reward = (reward * multiplier) / MAX_BPS;
+                    }
                 }
-                _updateCheckpoint(user);
-                _burn(user, tpbToBurn);
-                userCheckpoints[user].balance = balanceOf[user];
 
-                // Transfer WBTC
-                require(wbtc.transfer(user, toSend), "TPB: WBTC transfer failed");
-
-                emit AutoRedeemExecuted(user, pct, toSend);
+                if (reward > 0) {
+                    _mint(holder, reward);
+                    totalRewardMinted += reward;
+                }
             }
-
-            // Reset auto-redeem for next cycle
-            autoRedeemPct[user] = 0;
         }
 
-        // Clean registry
-        delete autoRedeemUsers;
-    }
+        // Process auto-redeems
+        uint256 vaultWBTC = wbtc.balanceOf(address(this));
+        for (uint256 i = 0; i < holders.length; i++) {
+            address holder = holders[i];
+            uint256 redeemBPS = autoRedeemBPS[holder];
+            if (redeemBPS == 0) continue;
 
-    /**
-     * @notice Start new cycle after unwind. Called by Safe.
-     */
-    function startNewCycle(uint256 newATH) external onlySafe {
-        require(!cycleActive, "TPB: cycle already active");
+            uint256 bal = balanceOf[holder];
+            uint256 tpbToRedeem = (bal * redeemBPS) / MAX_BPS;
+            if (tpbToRedeem == 0) continue;
 
-        currentCycle++;
-        cycleATH = newATH;
+            // Pro-rata WBTC (recalculate each time as supply changes)
+            uint256 wbtcOut = (tpbToRedeem * vaultWBTC) / totalSupply;
+            if (wbtcOut == 0) continue;
+            if (wbtcOut > vaultWBTC) wbtcOut = vaultWBTC;
+
+            _burn(holder, tpbToRedeem);
+            require(wbtc.transfer(holder, wbtcOut), "TPB: auto-redeem transfer failed");
+            vaultWBTC -= wbtcOut;
+
+            emit AutoRedeemExecuted(holder, tpbToRedeem, wbtcOut);
+        }
+
+        // Update cycle
+        currentATH = newATH;
+        cycleNumber++;
         cycleStartTime = block.timestamp;
-        cycleActive = true;
-        redemptionWindowOpen = false;
-        lastRebalanceTime = block.timestamp;
+        locked = false;
+        currentStep = 0;
 
-        // Clear auto-redeem registry (users were already reset in _processAutoRedeems)
-        for (uint256 i = 0; i < autoRedeemUsers.length; i++) {
-            isAutoRedeemRegistered[autoRedeemUsers[i]] = false;
-        }
-        delete autoRedeemUsers;
-
-        // Reset global time-weighted state
-        globalWeightedSum = 0;
-        globalLastBalance = totalSupply;
-        globalLastTimestamp = block.timestamp;
-
-        // Snapshot all current holder balances as cycle start balances
-        // Note: for gas efficiency, individual snapshots happen lazily via _ensureCycleStartSnapshot
-
-        emit CycleStarted(currentCycle, newATH, block.timestamp);
+        emit CycleEnded(cycleNumber - 1, totalRewardMinted);
     }
 
-    // ============================================================
-    //              LOCK AT ATH - 5% (Priority 4)
-    // ============================================================
-
-    /**
-     * @notice Auto-lock: close redemption window when price drops below ATH - 5%.
-     *         Called by keeper. Requires price to be below threshold.
-     */
-    function autoLock() external onlyKeeper {
-        uint256 price = _getBTCPrice();
-        uint256 lockPrice = cycleATH * (BPS - LOCK_THRESHOLD_BPS) / BPS;
-
-        require(price < lockPrice, "TPB: price above lock threshold");
-        require(redemptionWindowOpen, "TPB: already locked");
-
-        redemptionWindowOpen = false;
-        emit LockActivated(price, lockPrice);
+    // ================================================================
+    // Admin
+    // ================================================================
+    function setSafe(address _safe) external onlyOwner {
+        safe = _safe;
     }
 
-    // ============================================================
-    //                    INTERNAL: ERC-20
-    // ============================================================
+    function setKeeper(address _keeper) external onlyOwner {
+        keeper = _keeper;
+    }
 
+    function setNFTBonus(address _nft) external onlyOwner {
+        nftBonus = INFTBonus(_nft);
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "TPB: zero address");
+        owner = newOwner;
+    }
+
+    /// @notice Emergency: recover stuck tokens (not WBTC)
+    function recoverToken(address token, uint256 amount) external onlyOwner {
+        require(token != address(wbtc), "TPB: cannot recover WBTC");
+        IERC20(token).transfer(owner, amount);
+    }
+
+    // ================================================================
+    // ERC-20 Internal
+    // ================================================================
     function _mint(address to, uint256 amount) internal {
         totalSupply += amount;
         balanceOf[to] += amount;
@@ -603,23 +335,15 @@ contract VaultTPB {
     }
 
     function _burn(address from, uint256 amount) internal {
-        require(balanceOf[from] >= amount, "TPB: insufficient balance");
         balanceOf[from] -= amount;
         totalSupply -= amount;
         emit Transfer(from, address(0), amount);
     }
 
     function transfer(address to, uint256 amount) external nonReentrant returns (bool) {
-        _ensureCycleStartSnapshot(msg.sender);
-        _ensureCycleStartSnapshot(to);
-        _updateCheckpoint(msg.sender);
-        _updateCheckpoint(to);
         require(balanceOf[msg.sender] >= amount, "TPB: insufficient");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
-        // Update checkpoint balances after transfer
-        userCheckpoints[msg.sender].balance = balanceOf[msg.sender];
-        userCheckpoints[to].balance = balanceOf[to];
         emit Transfer(msg.sender, to, amount);
         return true;
     }
@@ -631,170 +355,15 @@ contract VaultTPB {
     }
 
     function transferFrom(address from, address to, uint256 amount) external nonReentrant returns (bool) {
-        _ensureCycleStartSnapshot(from);
-        _ensureCycleStartSnapshot(to);
-        _updateCheckpoint(from);
-        _updateCheckpoint(to);
-        require(allowance[from][msg.sender] >= amount, "TPB: allowance");
         require(balanceOf[from] >= amount, "TPB: insufficient");
-        allowance[from][msg.sender] -= amount;
+        uint256 allowed = allowance[from][msg.sender];
+        if (allowed != type(uint256).max) {
+            require(allowed >= amount, "TPB: allowance");
+            allowance[from][msg.sender] -= amount;
+        }
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
-        userCheckpoints[from].balance = balanceOf[from];
-        userCheckpoints[to].balance = balanceOf[to];
         emit Transfer(from, to, amount);
         return true;
-    }
-
-    // ============================================================
-    //                    INTERNAL: PRICING
-    // ============================================================
-
-    function _getBTCPrice() internal view returns (uint256) {
-        (, int256 price,,,) = btcOracle.latestRoundData();
-        require(price > 0, "TPB: invalid oracle price");
-        return uint256(price); // 8 decimals from Chainlink
-    }
-
-    /**
-     * @notice Total assets under management in USDC terms.
-     */
-    function _totalAssets() internal view returns (uint256) {
-        // In production: sum of AAVE positions + Deribit equity + pending pool
-        // For now: simplified
-        (uint256 collateral, uint256 debt,,,,) = aavePool.getUserAccountData(safe);
-        return (collateral - debt) * 1e6 / 1e8 + pendingPoolBalance; // Convert 8 dec to 6 dec
-    }
-
-    /**
-     * @notice Convert USDC amount to TPB tokens based on NAV.
-     */
-    function _usdcToTPB(uint256 usdcAmount) internal view returns (uint256) {
-        if (totalSupply == 0) {
-            return usdcAmount * 1e12; // Initial: 1 USDC = 1e12 TPB (6→18 dec)
-        }
-        uint256 totalAssets = _totalAssets();
-        if (totalAssets == 0) return usdcAmount * 1e12;
-        return (usdcAmount * totalSupply) / totalAssets;
-    }
-
-    /**
-     * @notice Convert TPB tokens to USDC based on NAV.
-     */
-    function _tpbToUSDC(uint256 tpbAmount) internal view returns (uint256) {
-        if (totalSupply == 0) return 0;
-        return (tpbAmount * _totalAssets()) / totalSupply;
-    }
-
-    // ============================================================
-    //                    VIEW FUNCTIONS
-    // ============================================================
-
-    function getNav() external view returns (uint256) {
-        return _totalAssets();
-    }
-
-    function getNavPerShare() external view returns (uint256) {
-        if (totalSupply == 0) return 1e18;
-        return (_totalAssets() * 1e18) / totalSupply;
-    }
-
-    function getCycleInfo() external view returns (
-        uint256 cycle,
-        uint256 ath,
-        uint256 startTime,
-        bool active,
-        bool redemptionOpen,
-        bool unwindIsPending
-    ) {
-        return (currentCycle, cycleATH, cycleStartTime, cycleActive, redemptionWindowOpen, unwindPending);
-    }
-
-    function getUserInfo(address user) external view returns (
-        uint256 balance,
-        uint256 autoRedeem,
-        uint256 timeWeightedShareBps,
-        uint256 estimatedUSDC
-    ) {
-        return (
-            balanceOf[user],
-            autoRedeemPct[user],
-            getUserTimeWeightedShare(user),
-            _tpbToUSDC(balanceOf[user])
-        );
-    }
-
-    function getAutoRedeemStats() external view returns (
-        uint256 registeredUsers,
-        uint256 totalDemandBps  // % of total supply requested for redeem
-    ) {
-        uint256 totalDemand = 0;
-        for (uint256 i = 0; i < autoRedeemUsers.length; i++) {
-            address user = autoRedeemUsers[i];
-            if (autoRedeemPct[user] > 0 && balanceOf[user] > 0) {
-                totalDemand += balanceOf[user] * autoRedeemPct[user] / 100;
-            }
-        }
-        uint256 demandBps = totalSupply > 0 ? totalDemand * BPS / totalSupply : 0;
-        return (autoRedeemUsers.length, demandBps);
-    }
-
-    // ============================================================
-    //                    ADMIN (Safe 2/2)
-    // ============================================================
-
-    function setTreasury(address newTreasury) external onlySafe {
-        treasury = newTreasury;
-    }
-
-    function withdrawTreasury() external onlySafe {
-        uint256 amount = treasuryAccrued;
-        treasuryAccrued = 0;
-        require(usdc.transfer(treasury, amount), "TPB: treasury transfer failed");
-    }
-
-    function updateATH(uint256 newATH) external onlySafe {
-        require(newATH > cycleATH, "TPB: ATH must increase");
-        cycleATH = newATH;
-    }
-
-    function setNFTContract(address _nft) external onlySafe {
-        nftContract = NFTBonus(_nft);
-    }
-
-    /**
-     * @notice Mint cycle NFT for a user. Called by keeper after cycle ends.
-     *         Eligibility: held >= MIN_NFT_DEPOSIT worth of TPB through entire cycle.
-     * @param user User address
-     * @param tier 1=Bronze, 2=Silver, 3=Gold, 4=Platinum
-     */
-    function mintCycleNFT(address user, uint8 tier) external {
-        require(
-            lsm.allowedKeepers(msg.sender) || msg.sender == safe,
-            "TPB: unauthorized"
-        );
-        require(address(nftContract) != address(0), "TPB: no NFT contract");
-        require(!cycleActive || currentCycle == 1, "TPB: cycle still active");
-
-        // Eligibility: user must have balance AND balance_end >= balance_start
-        require(balanceOf[user] > 0, "TPB: no position");
-        require(isNFTEligible(user), "TPB: balance decreased during cycle");
-
-        nftContract.mintCycleNFT(user, currentCycle, tier);
-    }
-
-    /**
-     * @notice Get a user's NFT bonus multiplier (delegates to NFTBonus contract).
-     * @return multiplierBps Bonus in BPS (10000 = 1.00×)
-     */
-    function getUserBonusMultiplier(address user) external view returns (uint256) {
-        if (address(nftContract) == address(0)) return 10000;
-        if (!isNFTEligible(user)) return 10000; // No bonus if balance decreased
-        return nftContract.getBonusMultiplier(user);
-    }
-
-    /// @notice Emergency pause
-    function emergencyPause() external onlySafe {
-        cycleActive = false;
     }
 }
