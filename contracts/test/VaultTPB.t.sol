@@ -95,7 +95,7 @@ contract VaultTPBTest is Test {
         vault.deposit(ONE_BTC);
         vm.stopPrank();
 
-        assertEq(vault.balanceOf(alice), ONE_BTC, "TPB balance");
+        assertEq(vault.balanceOf(alice), ONE_BTC, "TPB balance (first deposit 1:1)");
         assertEq(vault.totalSupply(), ONE_BTC, "total supply");
         assertEq(vault.pendingWBTC(), ONE_BTC, "pending");
         assertEq(wbtc.balanceOf(address(vault)), ONE_BTC, "vault WBTC");
@@ -105,6 +105,34 @@ contract VaultTPBTest is Test {
         vm.prank(alice);
         vm.expectRevert("TPB: zero deposit");
         vault.deposit(0);
+    }
+
+    function test_deposit_nav_based() public {
+        // Alice deposits 1 BTC first (1:1)
+        _depositAs(alice, ONE_BTC);
+        assertEq(vault.balanceOf(alice), ONE_BTC);
+
+        // Simulate strategy gains: vault now has 1.5 BTC worth of assets
+        wbtc.mint(address(vault), ONE_BTC / 2); // 0.5 BTC profit in vault
+
+        // Bob deposits 1 BTC — should get fewer TPB (NAV > 1)
+        _depositAs(bob, ONE_BTC);
+
+        // NAV: totalAssets = 2.5 BTC, supply = 1e8
+        // Bob gets: 1e8 * 1e8 / 1.5e8 = 0.6666e8
+        uint256 bobExpected = (ONE_BTC * ONE_BTC) / (ONE_BTC + ONE_BTC / 2);
+        assertEq(vault.balanceOf(bob), bobExpected, "bob NAV-based shares");
+
+        // Alice still has more TPB than Bob (she was early)
+        assertTrue(vault.balanceOf(alice) > vault.balanceOf(bob), "alice > bob");
+
+        // Both can redeem fair value
+        uint256 aliceValue = vault.previewRedeem(vault.balanceOf(alice));
+        uint256 bobValue = vault.previewRedeem(vault.balanceOf(bob));
+        // Alice should get ~1.5 BTC (her 1 BTC + her share of 0.5 profit)
+        // Bob should get ~1.0 BTC (his deposit, no profit dilution)
+        assertApproxEqAbs(aliceValue, 1.5e8, 1, "alice fair value");
+        assertApproxEqAbs(bobValue, ONE_BTC, 1, "bob fair value");
     }
 
     function test_deposit_multiple_users() public {
@@ -203,10 +231,10 @@ contract VaultTPBTest is Test {
         _depositAs(alice, ONE_BTC);
         _depositAs(bob, ONE_BTC);
 
-        // Simulate strategy gains: add 0.5 BTC to vault
+        // Simulate strategy gains: add 0.5 BTC to vault (liquid)
         wbtc.mint(address(vault), ONE_BTC / 2);
 
-        // Alice redeems all her TPB → gets 1.25 BTC (half of 2.5 BTC vault)
+        // Alice redeems all her TPB → gets 1.25 BTC (half of 2.5 BTC totalAssets)
         vm.prank(alice);
         vault.redeem(ONE_BTC);
 
@@ -259,6 +287,29 @@ contract VaultTPBTest is Test {
         vm.prank(keeper);
         vault.rebalancePendingPool(); // Should work via threshold
         assertEq(vault.pendingWBTC(), 0);
+    }
+
+    function test_deposit_nav_with_safe_assets() public {
+        // Alice deposits 1 BTC, rebalance sends to safe
+        _depositAs(alice, ONE_BTC);
+        vm.warp(block.timestamp + 7 days);
+        vm.prank(keeper);
+        vault.rebalancePendingPool();
+
+        // safeWBTC = 1e8, vault liquid = 0
+        assertEq(vault.safeWBTC(), ONE_BTC);
+        assertEq(vault.totalAssets(), ONE_BTC);
+
+        // Strategy gains: safe now holds 1.2 BTC
+        vm.prank(keeper);
+        vault.updateSafeWBTC(1.2e8);
+        assertEq(vault.totalAssets(), 1.2e8);
+
+        // Bob deposits 1 BTC — NAV = 1.2e8 assets, 1e8 supply
+        _depositAs(bob, ONE_BTC);
+        // Bob gets: 1e8 * 1e8 / 1.2e8 = 0.8333e8
+        uint256 bobExpected = (ONE_BTC * ONE_BTC) / 1.2e8;
+        assertEq(vault.balanceOf(bob), bobExpected, "bob shares with safe gains");
     }
 
     function test_rebalance_nothing_pending_reverts() public {
@@ -492,6 +543,7 @@ contract VaultTPBTest is Test {
         vm.prank(keeper);
         vault.rebalancePendingPool();
         assertEq(wbtc.balanceOf(safe), 3 * ONE_BTC);
+        assertEq(vault.safeWBTC(), 3 * ONE_BTC);
 
         // 3. Price drops → advance steps
         vm.prank(keeper);
@@ -505,10 +557,14 @@ contract VaultTPBTest is Test {
         vault.lockVault();
 
         // 5. Price recovers → new ATH
-        // Safe returns WBTC + profit
+        // Safe returns WBTC + profit to vault
         wbtc.mint(safe, 0.3e8); // 0.3 BTC profit
         vm.prank(safe);
         wbtc.transfer(address(vault), 3.3e8); // return all + profit
+
+        // Update accounting: safe emptied
+        vm.prank(keeper);
+        vault.updateSafeWBTC(0);
 
         // 6. Unlock and reset step
         vm.prank(keeper);

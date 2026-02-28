@@ -110,12 +110,31 @@ contract VaultTPB {
     }
 
     // ================================================================
-    // Deposit: WBTC → TPB (1:1 in sats)
+    // Deposit: WBTC → TPB (NAV-based)
     // ================================================================
     event Deposited(address indexed user, uint256 wbtcAmount, uint256 tpbMinted);
 
+    /// @notice Total WBTC controlled by the vault (in vault + in Safe strategy)
+    /// @dev Safe WBTC tracked via `safeWBTC`, updated by keeper after rebalance
+    uint256 public safeWBTC; // WBTC deployed in Safe (strategy)
+
+    function totalAssets() public view returns (uint256) {
+        return wbtc.balanceOf(address(this)) + safeWBTC;
+    }
+
     function deposit(uint256 wbtcAmount) external nonReentrant {
         require(wbtcAmount > 0, "TPB: zero deposit");
+
+        // Calculate shares BEFORE transfer (like ERC-4626)
+        uint256 shares;
+        uint256 supply = totalSupply;
+        uint256 assets = totalAssets();
+        if (supply == 0 || assets == 0) {
+            shares = wbtcAmount; // First deposit: 1:1
+        } else {
+            shares = (wbtcAmount * supply) / assets;
+        }
+        require(shares > 0, "TPB: zero shares");
 
         // Transfer WBTC to vault
         require(wbtc.transferFrom(msg.sender, address(this), wbtcAmount), "TPB: transfer failed");
@@ -123,10 +142,10 @@ contract VaultTPB {
         // Add to pending pool
         pendingWBTC += wbtcAmount;
 
-        // Mint TPB 1:1 (both are 8 decimals)
-        _mint(msg.sender, wbtcAmount);
+        // Mint TPB
+        _mint(msg.sender, shares);
 
-        emit Deposited(msg.sender, wbtcAmount, wbtcAmount);
+        emit Deposited(msg.sender, wbtcAmount, shares);
     }
 
     // ================================================================
@@ -134,16 +153,25 @@ contract VaultTPB {
     // ================================================================
     event Redeemed(address indexed user, uint256 tpbBurned, uint256 wbtcReturned);
 
+    /// @notice Preview how much WBTC a given TPB amount would redeem for
+    function previewRedeem(uint256 tpbAmount) public view returns (uint256) {
+        if (totalSupply == 0) return 0;
+        return (tpbAmount * totalAssets()) / totalSupply;
+    }
+
     function redeem(uint256 tpbAmount) external nonReentrant {
         require(tpbAmount > 0, "TPB: zero redeem");
         require(currentStep == 0, "TPB: not at step 0");
         require(!locked, "TPB: locked");
         require(balanceOf[msg.sender] >= tpbAmount, "TPB: insufficient balance");
 
-        // Calculate WBTC to return: pro-rata of vault's WBTC holdings
-        uint256 vaultWBTC = wbtc.balanceOf(address(this));
-        uint256 wbtcOut = (tpbAmount * vaultWBTC) / totalSupply;
+        // Calculate WBTC to return: pro-rata of total assets
+        uint256 wbtcOut = previewRedeem(tpbAmount);
         require(wbtcOut > 0, "TPB: zero output");
+
+        // Only redeem from vault's liquid WBTC (not from Safe)
+        uint256 liquid = wbtc.balanceOf(address(this));
+        require(wbtcOut <= liquid, "TPB: insufficient liquidity");
 
         // Burn TPB
         _burn(msg.sender, tpbAmount);
@@ -186,6 +214,7 @@ contract VaultTPB {
 
         // Transfer WBTC to Safe for strategy deployment
         require(wbtc.transfer(safe, amount), "TPB: transfer to safe failed");
+        safeWBTC += amount;
 
         emit Rebalanced(amount);
     }
@@ -266,8 +295,8 @@ contract VaultTPB {
             }
         }
 
-        // Process auto-redeems
-        uint256 vaultWBTC = wbtc.balanceOf(address(this));
+        // Process auto-redeems (from liquid WBTC only)
+        uint256 liquidWBTC = wbtc.balanceOf(address(this));
         for (uint256 i = 0; i < holders.length; i++) {
             address holder = holders[i];
             uint256 redeemBPS = autoRedeemBPS[holder];
@@ -277,14 +306,14 @@ contract VaultTPB {
             uint256 tpbToRedeem = (bal * redeemBPS) / MAX_BPS;
             if (tpbToRedeem == 0) continue;
 
-            // Pro-rata WBTC (recalculate each time as supply changes)
-            uint256 wbtcOut = (tpbToRedeem * vaultWBTC) / totalSupply;
+            // Pro-rata of total assets
+            uint256 wbtcOut = (tpbToRedeem * totalAssets()) / totalSupply;
             if (wbtcOut == 0) continue;
-            if (wbtcOut > vaultWBTC) wbtcOut = vaultWBTC;
+            if (wbtcOut > liquidWBTC) wbtcOut = liquidWBTC;
 
             _burn(holder, tpbToRedeem);
             require(wbtc.transfer(holder, wbtcOut), "TPB: auto-redeem transfer failed");
-            vaultWBTC -= wbtcOut;
+            liquidWBTC -= wbtcOut;
 
             emit AutoRedeemExecuted(holder, tpbToRedeem, wbtcOut);
         }
@@ -302,6 +331,18 @@ contract VaultTPB {
     // ================================================================
     // Admin
     // ================================================================
+    /// @notice Update safeWBTC to reflect strategy gains/losses
+    function updateSafeWBTC(uint256 _safeWBTC) external onlyKeeper {
+        safeWBTC = _safeWBTC;
+    }
+
+    /// @notice Safe returns WBTC to vault (e.g. at cycle end)
+    function returnFromSafe(uint256 amount) external onlyKeeper nonReentrant {
+        require(safeWBTC >= amount, "TPB: exceeds safe balance");
+        safeWBTC -= amount;
+        // Actual WBTC transfer happens via Safe tx, this just updates accounting
+    }
+
     function setSafe(address _safe) external onlyOwner {
         safe = _safe;
     }
