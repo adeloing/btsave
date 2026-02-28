@@ -276,6 +276,22 @@ async function fetchAllData() {
     fetchEthInfo(),
   ]);
 
+  // Mock LSM status (integrating data here instead of separate endpoint)
+  const lsmStatus = {
+    active: true,
+    killed: false,
+    botThreshold: 2,
+    maxGasPrice: 80,
+    minHealthFactor: 1.55,
+    dailyTxCount: 0,
+    maxDailyTx: 20,
+    proposalTTL: 1800,
+    lastExecution: null,
+    moduleAddress: '0x40f7b06433f27B9C9C24fD5d60F2816F9344e04E',
+    network: 'sepolia',
+    grafanaUrl: 'https://ratpoison2.duckdns.org/grafana/'
+  };
+
   const price = ticker.result.last_price;
   const equity = account.result.equity;
   const available = account.result.available_funds;
@@ -426,15 +442,15 @@ async function fetchAllData() {
     resetTimestamp: fundingReset.resetTimestamp,
   };
 
-  // Determine current zone based on Health Factor (Finale Ultime)
+  // Determine current zone based on Health Factor (v3 thresholds)
   const pctFromATH = ((price - ATH) / ATH) * 100;
   const hfZone = aave ? aave.healthFactor : 99;
   let currentZone = 'accumulation';
-  if (hfZone >= 1.50) currentZone = 'accumulation';
+  if (hfZone >= 1.55) currentZone = 'accumulation';
   else if (hfZone >= 1.40) currentZone = 'monitor';
-  else if (hfZone >= 1.30) currentZone = 'stop';
-  else if (hfZone >= 1.25) currentZone = 'zone1';
-  else if (hfZone >= 1.15) currentZone = 'zone2';
+  else if (hfZone >= 1.30) currentZone = 'zone1';
+  else if (hfZone >= 1.25) currentZone = 'zone2';
+  else if (hfZone >= 1.15) currentZone = 'zone3';
   else currentZone = 'emergency';
 
   // Compute next step above and below current price
@@ -458,60 +474,61 @@ async function fetchAllData() {
   const hf = aave ? aave.healthFactor : 0;
   const usdcAvailable = aave ? (aave.usdcCol || 0) : 0;
 
-  const nextActions = { zone: currentZone, pctFromATH: +pctFromATH.toFixed(1), actions: [], warnings: [], status: [] };
-
-  // Mid-route: strategy was entered below ATH, zones are theoretical reference
-  // Actions based on REAL state, not theoretical zone triggers
-  const midRoute = true; // Strategy was taken in progress
+  const nextActions = { 
+    zone: currentZone, 
+    pctFromATH: +pctFromATH.toFixed(1), 
+    autoActions: [], 
+    manualActions: [], 
+    warnings: [], 
+    status: [] 
+  };
 
   // Status: show real position state
-  nextActions.status.push('HF: ' + hf.toFixed(2) + (hf >= 2.0 ? ' ✅' : hf >= 1.5 ? ' ⚠️' : ' 🚨'));
+  nextActions.status.push('HF: ' + hf.toFixed(2) + (hf >= 2.0 ? ' ✅' : hf >= 1.55 ? ' ⚠️' : ' 🚨'));
   nextActions.status.push('Dette: $' + Math.round(debtUSD).toLocaleString('fr-FR'));
   nextActions.status.push('Short perp: ' + totalShortBTC.toFixed(3) + ' BTC');
   if (hasPuts) nextActions.status.push('Puts: ' + putSize.toFixed(2) + '× $' + putStrike.toLocaleString('fr-FR') + ' ' + putExpiry);
   nextActions.status.push('Sell stops: ' + untriggeredStops.length + ' en attente');
   if (usdcAvailable > 0) nextActions.status.push('Buffer USDC AAVE: $' + Math.round(usdcAvailable).toLocaleString('fr-FR'));
 
-  if (midRoute) {
-    nextActions.warnings.push('Stratégie prise en cours de route — règles de zone adaptées à l\'état réel');
-  }
+  // AUTO ACTIONS (bots via LSM)
+  nextActions.autoActions.push('Sell stop grid sur Deribit (' + SHORT_PER_STEP + ' BTC par palier)');
+  nextActions.autoActions.push('Monitoring HF continu');
+  nextActions.autoActions.push('Kill switch si anomalie détectée');
+  nextActions.autoActions.push('Cooldown 300s entre exécutions');
+  nextActions.autoActions.push('Gas check ≤ 80 gwei avant TX');
 
-  // Actions based on Health Factor (Finale Ultime - HF Only)
+  // MANUAL ACTIONS (human 2/2)
   if (hf < 1.15) {
-    nextActions.actions.push('🚨 HF CRITIQUE (' + hf.toFixed(2) + ') — Position ultra-défensive');
-    if (hasPuts) nextActions.actions.push('Vendre TOUS puts restants');
-    nextActions.actions.push('Rembourser le maximum possible de dette');
-    nextActions.actions.push('AUCUN nouvel emprunt');
+    // Emergency zone
+    nextActions.manualActions.push('🚨 URGENCE — vendre tout + rembourser max');
+    if (hasPuts) nextActions.manualActions.push('Vendre TOUS puts restants');
+    nextActions.manualActions.push('Rembourser le maximum possible de dette');
   } else if (hf < 1.25) {
-    nextActions.actions.push('🔶 HF ' + hf.toFixed(2) + ' — Vendre puts restants + rembourser 40% dette');
-    if (hasPuts) nextActions.actions.push('Vendre 50% puts restants → repay 40% dette');
-    nextActions.actions.push('AUCUN nouvel emprunt');
+    // Zone 3
+    nextActions.manualActions.push('Vendre puts restants + rembourser 40% dette');
+    if (hasPuts) nextActions.manualActions.push('Vendre 100% puts → repay 40% dette');
   } else if (hf < 1.30) {
-    nextActions.actions.push('⚠️ HF ' + hf.toFixed(2) + ' — Vendre 50% puts + rembourser 25% dette');
-    if (hasPuts) nextActions.actions.push('Vendre 50% des puts → repay 25% dette');
-    nextActions.actions.push('AUCUN nouvel emprunt');
+    // Zone 2
+    nextActions.manualActions.push('Vendre 50% puts + rembourser 25% dette');
+    if (hasPuts) nextActions.manualActions.push('Vendre 50% puts → repay 25% dette');
   } else if (hf < 1.40) {
-    nextActions.actions.push('🛑 HF ' + hf.toFixed(2) + ' — STOP total nouveaux emprunts');
-    nextActions.actions.push('Mode protection / monétisation puts');
-    if (hasPuts) nextActions.actions.push('Conserver puts (protection active)');
-  } else if (hf < 1.50) {
-    nextActions.actions.push('👁️ HF ' + hf.toFixed(2) + ' — Monitor renforcé, emprunts autorisés');
-    if (hasPuts) nextActions.actions.push('🛡️ Puts actifs — protection en place');
+    // Zone 1 - STOP borrowing
+    nextActions.manualActions.push('🛑 STOP nouveaux emprunts');
+    nextActions.manualActions.push('Monitoring puts pour monétisation');
+  } else if (hf < 1.55) {
+    // Monitor zone
+    nextActions.manualActions.push('Monitor renforcé + manual puts review');
+    nextActions.manualActions.push('Borrow USDC sur AAVE (' + BORROW_PER_STEP.toLocaleString('fr-FR') + ' USDC/palier)');
+    nextActions.manualActions.push('Swap USDC → WBTC via DeFiLlama');
+    nextActions.manualActions.push('Supply aEthWBTC sur AAVE');
   } else {
-    // HF >= 1.50 — Accumulation normale
-    nextActions.actions.push('✅ HF sain (' + hf.toFixed(2) + ') — Accumulation normale');
-    if (hasPuts) nextActions.actions.push('🛡️ Puts actifs — protection en place');
-  }
-
-  // Manual steps (shown indented under directional trigger)
-  nextActions.manualSteps = [];
-  if (hf >= 1.40) {
-    nextActions.manualSteps.push('1️⃣ AAVE → Borrow ' + BORROW_PER_STEP.toLocaleString('fr-FR') + ' USDC');
-    nextActions.manualSteps.push('2️⃣ DeFiLlama → Swap ' + BORROW_PER_STEP.toLocaleString('fr-FR') + ' USDC → WBTC (~' + (BORROW_PER_STEP / price).toFixed(4) + ' BTC @ $' + Math.round(price).toLocaleString('fr-FR') + ')');
-    nextActions.manualSteps.push('3️⃣ AAVE → Supply aEthWBTC');
-    if (hf >= 1.50) {
-      nextActions.manualSteps.push('4️⃣ Deribit → Sell stop ' + SHORT_PER_STEP + ' BTC au prochain palier');
-    }
+    // Accumulation normale (HF >= 1.55)
+    nextActions.manualActions.push('Borrow USDC sur AAVE (' + BORROW_PER_STEP.toLocaleString('fr-FR') + ' USDC/palier)');
+    nextActions.manualActions.push('Swap USDC → WBTC via DeFiLlama');
+    nextActions.manualActions.push('Supply aEthWBTC sur AAVE');
+    nextActions.manualActions.push('Achat puts OTM sur Deribit');
+    nextActions.manualActions.push('Rebalancing à l\'ATH');
   }
 
   // === PUT OTM recommendation ===
@@ -603,16 +620,12 @@ async function fetchAllData() {
     };
   }
 
-  // Directional actions
+  // Directional context
   if (nextStepDown) {
-    nextActions.actions.push('▼ Si ' + nextStepDown.prix.toLocaleString('fr-FR') + ': sell stop 0.095 BTC se déclenche');
-    // Manual steps go right after ▼
-    for (const s of nextActions.manualSteps) {
-      nextActions.actions.push('__indent__' + s);
-    }
+    nextActions.autoActions.push('▼ Si $' + nextStepDown.prix.toLocaleString('fr-FR') + ': sell stop ' + SHORT_PER_STEP + ' BTC se déclenche');
   }
   if (nextStepUp) {
-    nextActions.actions.push('▲ Si ' + nextStepUp.prix.toLocaleString('fr-FR') + ': conserver shorts pour contango');
+    nextActions.autoActions.push('▲ Si $' + nextStepUp.prix.toLocaleString('fr-FR') + ': conserver shorts pour contango');
   }
 
   return {
@@ -620,8 +633,9 @@ async function fetchAllData() {
     nextStepDown, nextStepUp, currentStepPrice,
     nextActions,
     putRecommendation,
+    lsmStatus,
     strategy: {
-      name: 'Hybrid ZERO-LIQ Aggressive Accumulator + Quarterly Contango Hedge',
+      name: 'Hybrid ZERO-LIQ + LSM Module v3',
       split: '79/18/3',
       wbtcStart: WBTC_START,
       stepSize: STEP_SIZE,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>BTSAVE Finale Ultime</title>
+<title>BTSAVE v3 — Hybrid ZERO-LIQ + LSM</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
@@ -82,6 +82,16 @@
   .split-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .option-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
   .option-row:last-child { border: none; }
+  .action-badge { display: inline-block; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .action-badge.auto { background: linear-gradient(135deg, #10b981, #34d399); color: #fff; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3); }
+  .action-badge.manual { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #fff; box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3); }
+  .action-section { margin-bottom: 16px; }
+  .action-list { margin-left: 8px; }
+  .action-item { padding: 4px 0; font-size: 12px; line-height: 1.4; color: var(--text); }
+  .lsm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .lsm-item { text-align: center; }
+  .lsm-value { font-weight: 700; font-size: 14px; }
+  .lsm-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
 </style>
 </head>
 <body>
@@ -117,21 +127,20 @@ function render(d) {
   
   let hfColor = 'green';
   if (a) {
-    if (a.healthFactor < 1.5) hfColor = 'red';
+    if (a.healthFactor < 1.55) hfColor = 'red';
     else if (a.healthFactor < 2.0) hfColor = 'orange';
   }
 
   const ltvPct = a ? (a.totalDebtUSD / a.totalCollateralUSD * 100).toFixed(1) : '—';
 
-  // Zone thresholds
-  // Health Factor based zones (new Finale Ultime strategy)
+  // Zone thresholds (v3 strategy)
   const zones = [
-    { id: 'accumulation', label: '✅ Accumulation normale', condition: 'HF ≥ 1.50', hf: '1.50+' },
-    { id: 'monitor', label: '👁️ Monitor renforcé', condition: 'HF 1.40 à 1.50', hf: '1.40-1.50' },
-    { id: 'stop', label: '🛑 STOP nouveaux emprunts', condition: 'HF < 1.40', hf: '<1.40' },
-    { id: 'zone1', label: '⚠️ Vendre 50% puts + rembourser 25% dette', condition: 'HF 1.30', hf: '1.30' },
-    { id: 'zone2', label: '🔶 Vendre puts restants + rembourser 40% dette', condition: 'HF 1.25', hf: '1.25' },
-    { id: 'emergency', label: '🚨 Vendre tout + rembourser max', condition: 'HF < 1.15', hf: '<1.15' },
+    { id: 'accumulation', label: 'HF ≥ 1.55: Accumulation normale', description: '⚡ auto shorts + ✋ manual borrow/swap', hf: '1.55+' },
+    { id: 'monitor', label: 'HF 1.40-1.55: Monitor renforcé', description: '⚡ auto monitoring + ✋ manual puts review', hf: '1.40-1.55' },
+    { id: 'zone1', label: 'HF < 1.40: STOP nouveaux emprunts', description: 'Protection pure', hf: '<1.40' },
+    { id: 'zone2', label: 'HF 1.25-1.30: Vendre 50% puts + rembourser 25% dette', description: '✋ MANUEL', hf: '1.25-1.30' },
+    { id: 'zone3', label: 'HF 1.15-1.25: Vendre puts restants + rembourser 40% dette', description: '✋ MANUEL', hf: '1.15-1.25' },
+    { id: 'emergency', label: 'HF < 1.15: URGENCE — vendre tout + rembourser max', description: '✋ MANUEL', hf: '<1.15' },
   ];
 
   $('#app').innerHTML = `
@@ -415,26 +424,66 @@ function render(d) {
       </div>` : ''}
     </div>
 
+    <!-- LSM Module Section -->
+    ${d.lsmStatus ? `
+    <div class="section">
+      <h3>🤖 Module LSM</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div>
+          <span style="font-size:14px;font-weight:700;color:${d.lsmStatus.active ? 'var(--green)' : 'var(--red)'}">${d.lsmStatus.active ? 'ACTIVE' : 'KILLED'}</span>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${d.lsmStatus.network} • ${d.lsmStatus.moduleAddress.slice(0,6)}...${d.lsmStatus.moduleAddress.slice(-4)}</div>
+        </div>
+        <a href="${d.lsmStatus.grafanaUrl}" target="_blank" style="background:var(--accent);color:var(--bg);padding:4px 12px;border-radius:6px;font-size:11px;font-weight:700;text-decoration:none">Grafana</a>
+      </div>
+      <div class="lsm-grid">
+        <div class="lsm-item">
+          <div class="lsm-value">${d.lsmStatus.botThreshold}/3</div>
+          <div class="lsm-label">Bot threshold</div>
+        </div>
+        <div class="lsm-item">
+          <div class="lsm-value">${d.lsmStatus.maxGasPrice}</div>
+          <div class="lsm-label">Gas max (gwei)</div>
+        </div>
+        <div class="lsm-item">
+          <div class="lsm-value">${d.lsmStatus.minHealthFactor}</div>
+          <div class="lsm-label">HF min</div>
+        </div>
+        <div class="lsm-item">
+          <div class="lsm-value">${d.lsmStatus.dailyTxCount}/${d.lsmStatus.maxDailyTx}</div>
+          <div class="lsm-label">Proposals aujourd'hui</div>
+        </div>
+      </div>
+      <div style="text-align:center;font-size:11px;color:var(--muted);margin-top:8px">
+        Dernière exécution: ${d.lsmStatus.lastExecution ? new Date(d.lsmStatus.lastExecution).toLocaleString('fr-FR') : 'Aucune'}
+      </div>
+    </div>
+    ` : ''}
+
     <!-- Prochaines Actions -->
     ${d.nextActions ? `
     <div class="section" style="border-color:rgba(246,176,107,0.3);background:linear-gradient(135deg,rgba(246,176,107,0.06),var(--card))">
       <h3>🎯 Prochaines actions <span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0">(${d.nextActions.pctFromATH}% ATH)</span></h3>
-      ${d.nextActions.warnings.length ? d.nextActions.warnings.map(w => `
-        <div style="background:rgba(246,176,107,0.08);border:1px solid rgba(246,176,107,0.2);border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:var(--accent)">ℹ️ ${w}</div>
-      `).join('') : ''}
+      
       ${d.nextActions.status.length ? `
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
         ${d.nextActions.status.map(s => `<span style="background:rgba(255,255,255,0.05);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--muted)">${s}</span>`).join('')}
       </div>` : ''}
-      ${d.nextActions.actions.map((a, i) => {
-        const indented = a.startsWith('__indent__');
-        const text = indented ? a.replace('__indent__', '') : a;
-        return `
-        <div style="display:flex;align-items:flex-start;gap:${indented ? '6' : '8'}px;padding:${indented ? '3' : '6'}px 0;${indented ? 'margin-left:24px;border-left:2px solid rgba(246,176,107,0.25);padding-left:10px;' : ''}${i < d.nextActions.actions.length - 1 && !d.nextActions.actions[i+1]?.startsWith?.('__indent__') ? 'border-bottom:1px solid var(--border)' : ''}">
-          ${indented ? '' : '<span style="color:var(--accent);font-size:14px;line-height:1.2">›</span>'}
-          <span style="font-size:${indented ? '11' : '12'}px;line-height:1.4;${indented ? 'color:var(--text)' : ''}">${text}</span>
-        </div>`;
-      }).join('')}
+      
+      <!-- AUTO Actions -->
+      <div class="action-section">
+        <div class="action-badge auto">⚡ AUTO</div>
+        <div class="action-list">
+          ${d.nextActions.autoActions.map(a => `<div class="action-item">• ${a}</div>`).join('')}
+        </div>
+      </div>
+      
+      <!-- MANUAL Actions -->
+      <div class="action-section">
+        <div class="action-badge manual">✋ MANUEL</div>
+        <div class="action-list">
+          ${d.nextActions.manualActions.map(a => `<div class="action-item">• ${a}</div>`).join('')}
+        </div>
+      </div>
 
       ${d.putRecommendation ? `
       <div style="margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid ${d.putRecommendation.eligible && d.putRecommendation.needsAction ? 'rgba(110,231,160,0.4)' : 'rgba(122,114,133,0.3)'};background:${d.putRecommendation.eligible && d.putRecommendation.needsAction ? 'rgba(110,231,160,0.06)' : 'rgba(255,255,255,0.02)'}">
@@ -467,24 +516,26 @@ function render(d) {
     </div>
     ` : ''}
 
-    <!-- Règles de gestion HF -->
+    <!-- Règles de gestion HF v3 -->
     <div class="section">
-      <h3>📋 Règles de gestion par Health Factor</h3>
+      <h3>📋 Règles de gestion v3 (mise à jour LSM)</h3>
       ${zones.map(z => `
         <div class="zone-item ${d.currentZone === z.id ? 'active' : ''}">
-          <div style="display:flex;justify-content:space-between">
-            <span>${z.label}</span>
-            <span class="zone-price" style="color:var(--accent)">HF ${z.hf}</span>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div style="flex:1">
+              <div style="font-weight:600;margin-bottom:2px">${z.label}</div>
+              <div style="font-size:10px;color:var(--muted)">${z.description}</div>
+            </div>
+            <span class="zone-price" style="color:var(--accent);font-size:12px;margin-left:8px">HF ${z.hf}</span>
           </div>
-          <div style="font-size:10px;color:var(--muted)">${z.condition}</div>
         </div>
       `).join('')}
     </div>
     
     <div class="footer">
       <span class="live-dot"></span> Mis à jour: ${new Date().toLocaleString('fr-FR')} — Auto-refresh 60s<br>
-      Finale Ultime - Répartition 79/18/3 - HF Only - Puts Auto - L1 ETH<br>
-      <span style="font-size: 9px; opacity: 0.7;">Version verrouillée le 18 février 2026</span>
+      BTSAVE v3 — Hybrid ZERO-LIQ + LSM Module<br>
+      <span style="font-size: 9px; opacity: 0.7;">Répartition 79/18/3 • HF seuils v3 • AUTO/MANUEL hybrid</span>
     </div>
   `;
   
