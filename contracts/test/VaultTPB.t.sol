@@ -403,6 +403,84 @@ contract VaultTPBTest is Test {
         assertApproxEqAbs(bobShare, 2500, 10);
     }
 
+    // ===== Auto-Redeem Pro-Rata =====
+    function test_AutoRedeem_FullLiquidity() public {
+        vm.warp(1000);
+        vm.prank(alice);
+        vault.deposit(10_000e6);
+
+        vm.prank(alice);
+        vault.setAutoRedeemAtNextATH(50);
+
+        // Fund vault with WBTC for redemption
+        wbtc.mint(address(vault), 10e8); // 10 BTC
+
+        // Trigger unwind
+        oracle.setPrice(int256(ATH));
+        vm.prank(keeper);
+        vault.proposeUnwind();
+        vm.prank(address(safe));
+        vault.executeUnwind();
+
+        // Alice should have received WBTC
+        assertGt(wbtc.balanceOf(alice), 0);
+        // Auto-redeem pct should be reset
+        assertEq(vault.autoRedeemPct(alice), 0);
+    }
+
+    function test_AutoRedeem_ProRata() public {
+        vm.warp(1000);
+        vm.prank(alice);
+        vault.deposit(50_000e6);
+        vm.prank(bob);
+        vault.deposit(50_000e6);
+
+        vm.prank(alice);
+        vault.setAutoRedeemAtNextATH(100);
+        vm.prank(bob);
+        vault.setAutoRedeemAtNextATH(100);
+
+        // Fund vault with only 0.1 BTC (less than total demand)
+        wbtc.mint(address(vault), 0.1e8);
+
+        // Check stats
+        (uint256 users,) = vault.getAutoRedeemStats();
+        assertEq(users, 2);
+
+        // Trigger unwind
+        oracle.setPrice(int256(ATH));
+        vm.prank(keeper);
+        vault.proposeUnwind();
+        vm.prank(address(safe));
+        vault.executeUnwind();
+
+        // Both should have received WBTC (pro-rata)
+        uint256 aliceWBTC = wbtc.balanceOf(alice);
+        uint256 bobWBTC = wbtc.balanceOf(bob);
+        assertGt(aliceWBTC, 0);
+        assertGt(bobWBTC, 0);
+        // Total distributed should equal available
+        assertApproxEqAbs(aliceWBTC + bobWBTC, 0.1e8, 1);
+    }
+
+    function test_AutoRedeem_NoWBTC() public {
+        vm.warp(1000);
+        vm.prank(alice);
+        vault.deposit(10_000e6);
+        vm.prank(alice);
+        vault.setAutoRedeemAtNextATH(100);
+
+        // No WBTC in vault — unwind should still work
+        oracle.setPrice(int256(ATH));
+        vm.prank(keeper);
+        vault.proposeUnwind();
+        vm.prank(address(safe));
+        vault.executeUnwind();
+
+        assertEq(wbtc.balanceOf(alice), 0);
+        assertFalse(vault.cycleActive());
+    }
+
     // ===== Entry Fee View =====
     function test_GetEntryFeeBps() public {
         oracle.setPrice(100_000e8); // Well below ATH-3%
