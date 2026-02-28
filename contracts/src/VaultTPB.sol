@@ -93,6 +93,10 @@ contract VaultTPB {
     uint256 public pendingPoolBalance;  // USDC not yet rebalanced
     uint256 public lastRebalanceTime;
 
+    // --- Auto-Redeem Registry ---
+    address[] public autoRedeemUsers;  // Users with autoRedeemPct > 0
+    mapping(address => bool) public isAutoRedeemRegistered;
+
     // --- Treasury ---
     address public treasury;
     uint256 public treasuryAccrued;
@@ -221,6 +225,12 @@ contract VaultTPB {
     function setAutoRedeemAtNextATH(uint256 percent) external {
         require(percent <= 100, "TPB: max 100%");
         require(balanceOf[msg.sender] > 0, "TPB: no position");
+
+        // Track user in registry
+        if (percent > 0 && !isAutoRedeemRegistered[msg.sender]) {
+            autoRedeemUsers.push(msg.sender);
+            isAutoRedeemRegistered[msg.sender] = true;
+        }
 
         autoRedeemPct[msg.sender] = percent;
         emit AutoRedeemSet(msg.sender, percent);
@@ -391,15 +401,88 @@ contract VaultTPB {
     }
 
     function _performUnwind() internal {
-        // 1. Process auto-redeems (WBTC)
-        // This would iterate through users with autoRedeemPct > 0
-        // For gas efficiency, this should be batched off-chain by keeper
+        // 1. Process auto-redeems with pro-rata if needed
+        _processAutoRedeems();
 
         // 2. Reset cycle
         unwindPending = false;
         cycleActive = false;
 
         emit CycleEnded(currentCycle, block.timestamp, 0);
+    }
+
+    /**
+     * @notice Process all auto-redeems at unwind. WBTC only.
+     *         If total demand > available WBTC, pro-rata distribution.
+     *         Remainder stays in vault for next cycle.
+     */
+    function _processAutoRedeems() internal {
+        uint256 availableWBTC = wbtc.balanceOf(address(this));
+        if (availableWBTC == 0) return;
+
+        // Phase 1: Calculate total demand in WBTC
+        uint256 totalDemandWBTC = 0;
+        uint256 len = autoRedeemUsers.length;
+
+        // Temp arrays for batch processing
+        uint256[] memory demands = new uint256[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            address user = autoRedeemUsers[i];
+            uint256 pct = autoRedeemPct[user];
+            if (pct == 0 || balanceOf[user] == 0) continue;
+
+            // User's share of vault in WBTC terms
+            uint256 userTPB = balanceOf[user] * pct / 100;
+            uint256 userUSDC = _tpbToUSDC(userTPB);
+            uint256 btcPrice = _getBTCPrice(); // 8 decimals
+            // Convert USDC (6 dec) to WBTC (8 dec): usdc * 1e8 / price * 1e2
+            uint256 userWBTC = userUSDC * 1e10 / btcPrice;
+
+            demands[i] = userWBTC;
+            totalDemandWBTC += userWBTC;
+        }
+
+        if (totalDemandWBTC == 0) return;
+
+        // Phase 2: Distribute (pro-rata if demand > available)
+        bool proRata = totalDemandWBTC > availableWBTC;
+
+        for (uint256 i = 0; i < len; i++) {
+            address user = autoRedeemUsers[i];
+            if (demands[i] == 0) continue;
+
+            uint256 toSend;
+            if (proRata) {
+                toSend = demands[i] * availableWBTC / totalDemandWBTC;
+            } else {
+                toSend = demands[i];
+            }
+
+            if (toSend > 0) {
+                // Burn proportional TPB
+                uint256 pct = autoRedeemPct[user];
+                uint256 tpbToBurn = balanceOf[user] * pct / 100;
+                if (proRata) {
+                    // Only burn proportion that was actually redeemed
+                    tpbToBurn = tpbToBurn * toSend / demands[i];
+                }
+                _updateCheckpoint(user);
+                _burn(user, tpbToBurn);
+                userCheckpoints[user].balance = balanceOf[user];
+
+                // Transfer WBTC
+                require(wbtc.transfer(user, toSend), "TPB: WBTC transfer failed");
+
+                emit AutoRedeemExecuted(user, pct, toSend);
+            }
+
+            // Reset auto-redeem for next cycle
+            autoRedeemPct[user] = 0;
+        }
+
+        // Clean registry
+        delete autoRedeemUsers;
     }
 
     /**
@@ -414,6 +497,12 @@ contract VaultTPB {
         cycleActive = true;
         redemptionWindowOpen = false;
         lastRebalanceTime = block.timestamp;
+
+        // Clear auto-redeem registry (users were already reset in _processAutoRedeems)
+        for (uint256 i = 0; i < autoRedeemUsers.length; i++) {
+            isAutoRedeemRegistered[autoRedeemUsers[i]] = false;
+        }
+        delete autoRedeemUsers;
 
         // Reset global time-weighted state
         globalWeightedSum = 0;
@@ -568,6 +657,21 @@ contract VaultTPB {
             getUserTimeWeightedShare(user),
             _tpbToUSDC(balanceOf[user])
         );
+    }
+
+    function getAutoRedeemStats() external view returns (
+        uint256 registeredUsers,
+        uint256 totalDemandBps  // % of total supply requested for redeem
+    ) {
+        uint256 totalDemand = 0;
+        for (uint256 i = 0; i < autoRedeemUsers.length; i++) {
+            address user = autoRedeemUsers[i];
+            if (autoRedeemPct[user] > 0 && balanceOf[user] > 0) {
+                totalDemand += balanceOf[user] * autoRedeemPct[user] / 100;
+            }
+        }
+        uint256 demandBps = totalSupply > 0 ? totalDemand * BPS / totalSupply : 0;
+        return (autoRedeemUsers.length, demandBps);
     }
 
     // ============================================================
