@@ -72,6 +72,37 @@
     object-fit: cover;
     display: block;
   }
+  /* Hero text overlay (visible on calm/dock image, hidden on storm which has baked-in text) */
+  .hero-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 48px 20px 0;
+    text-align: center;
+    z-index: 2;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 60%, transparent 100%);
+  }
+  .hero-wrap.storm .hero-overlay { display: none; }
+  .hero-title {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 38px;
+    color: #f0a020;
+    line-height: 1.1;
+    letter-spacing: 2px;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.7);
+  }
+  .hero-subtitle {
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    color: #e8e8e8;
+    margin-top: 10px;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.8);
+    line-height: 1.4;
+  }
+
   /* Green dollar tint on the bottom half (storm image only) */
   .hero-wrap.storm::after {
     content: '';
@@ -153,6 +184,10 @@
   <!-- Hero illustration — switches based on current step -->
   <div class="hero-wrap">
     <img id="heroImg" src="tpb-step0-dock.jpg" alt="Turbo Paper Boat — orange paper boat docked at a sunny pier">
+    <div class="hero-overlay">
+      <h1 class="hero-title">TURBO<br>PAPER BOAT</h1>
+      <p class="hero-subtitle">Bitcoin Yield. Protected.<br>Rewarded.</p>
+    </div>
   </div>
 
   <!-- Metrics bar: 6 metrics -->
