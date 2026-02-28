@@ -6,10 +6,10 @@
 const { ethers } = require('ethers');
 const fs = require('fs');
 
-const RPC_URL = process.env.RPC_URL || 'https://0xrpc.io/sep';
+const RPC_URL = process.env.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com';
 const PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY;
-const MODULE_ADDRESS = '0x0e81f9cDE815709A73e609F7424B1Fa0FF7dc153';
-const TARGET_ADDRESS = '0x77b819DD5B8E441f11CeF25421A111c0AD0003b5';
+const MODULE_ADDRESS = '0x40f7b06433f27B9C9C24fD5d60F2816F9344e04E';
+const TARGET_ADDRESS = '0xC5D4397049AE8BfD7f59B37ee31169d4B8D18DfC';
 
 const MODULE_ABI = JSON.parse(fs.readFileSync(__dirname + '/module-abi.json', 'utf8'));
 

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 /**
- * @title LimitedSignerModule v2
+ * @title LimitedSignerModule v3
  * @notice Gnosis Safe Module that allows whitelisted bots to execute
  *         pre-validated transactions with hard-coded safety rules.
  *         Bots are NOT Safe owners. All critical operations require
@@ -60,7 +60,7 @@ contract LimitedSignerModule {
 
     // --- Aave params ---
     uint256 public borrowPerStepBase = 12_480e6; // USDC 6 decimals
-    uint256 public minHealthFactor = 1.72e18;
+    uint256 public minHealthFactor = 1.55e18;
     uint256 public maxVolatilityBps = 400; // 4%
     uint256 public borrowCooldown = 300; // 5 min
 
@@ -76,6 +76,17 @@ contract LimitedSignerModule {
 
     // --- TVL cap ---
     uint256 public maxBorrowTvlBps = 400; // 4% of TVL per tx
+
+    // --- F2: Proposal TTL (default 30 min) ---
+    uint256 public proposalTTL = 1800;
+
+    // --- F1: Emergency gas override tracking ---
+    bool public emergencyGasActive;
+
+    // --- NC2: Repay selectors (bypass HF check — repaying improves HF) ---
+    // Aave repay(address,uint256,uint256,address) = 0x573ade81
+    // Aave repayWithATokens(address,uint256,uint256) = 0x35ea6a75 — actually 0x2dad97d4
+    mapping(bytes4 => bool) public isRepaySelector;
 
     // --- Whitelists ---
     mapping(address => bool) public allowedTargets;
@@ -147,6 +158,14 @@ contract LimitedSignerModule {
         _;
     }
 
+    modifier onlyKeeperOrBot() {
+        require(
+            allowedKeepers[msg.sender] || authorizedBots[msg.sender],
+            "LSM: unauthorized executor"
+        );
+        _;
+    }
+
     // ============================================================
     //                      CONSTRUCTOR
     // ============================================================
@@ -160,6 +179,9 @@ contract LimitedSignerModule {
         aavePool = IAavePool(_aavePool);
         wbtcOracle = IChainlinkAggregator(_wbtcOracle);
         dailyResetTimestamp = block.timestamp;
+
+        // NC2: Aave repay selectors bypass HF pre-check (repaying always improves HF)
+        isRepaySelector[0x573ade81] = true; // repay(address,uint256,uint256,address)
     }
 
     // ============================================================
@@ -250,9 +272,15 @@ contract LimitedSignerModule {
      *   R18 — Rebalance amount ≤ 2% of total position (bot-side check)
      *   R19 — Borrow amount ≤ 4% of TVL (validateBorrow)
      */
-    function executeIfReady(bytes32 txHash) external notKilled {
+    /**
+     * @notice Execute after threshold approvals. F3: only keeper or bot can call.
+     */
+    function executeIfReady(bytes32 txHash) external onlyKeeperOrBot notKilled {
         Proposal storage p = proposals[txHash];
         require(p.status == TxStatus.PENDING, "LSM: not pending");
+
+        // F2: TTL — proposal must not be expired
+        require(block.timestamp <= p.timestamp + proposalTTL, "LSM: proposal expired");
 
         // R8: threshold
         require(p.approvalCount >= botThreshold, "LSM: insufficient bot signatures");
@@ -279,8 +307,10 @@ contract LimitedSignerModule {
         // R7: no unauthorized token transfers
         _checkNoUnauthorizedTransfer(p.to, p.data);
 
-        // R14 pre-check: HF before
-        _checkHealthFactor();
+        // R14 pre-check: HF before (NC2: skip for repay operations — repaying improves HF)
+        if (!isRepaySelector[selector]) {
+            _checkHealthFactor();
+        }
 
         // --- Execute ---
         p.status = TxStatus.EXECUTED;
@@ -294,8 +324,14 @@ contract LimitedSignerModule {
             0 // Call
         );
 
-        // R14 post-check: HF after (revert entire tx if too low)
+        // R14 post-check: HF after (always checked, even for repay — ensures no regression)
         _checkHealthFactor();
+
+        // F1: auto-reset emergency gas override after execution
+        if (emergencyGasActive) {
+            maxGasPrice = 80 gwei;
+            emergencyGasActive = false;
+        }
 
         emit TxExecuted(txHash, p.to, success);
         require(success, "LSM: execution failed");
@@ -516,12 +552,21 @@ contract LimitedSignerModule {
         maxBorrowTvlBps = newBps;
     }
 
+    function setProposalTTL(uint256 newTTL) external onlySafe {
+        require(newTTL >= 60, "LSM: TTL too short");
+        proposalTTL = newTTL;
+    }
+
+    function setRepaySelector(bytes4 selector, bool allowed) external onlySafe {
+        isRepaySelector[selector] = allowed;
+    }
+
     /**
-     * @notice Emergency override for high gas situations (human-only).
-     *         Temporarily sets maxGasPrice to type(uint256).max for one block.
+     * @notice F1: Emergency override for high gas situations (human-only).
+     *         Sets maxGasPrice to max until next executeIfReady, then auto-resets to 80 gwei.
      */
-    function emergencyHighGas(bytes32 txHash) external onlySafe {
+    function emergencyHighGas() external onlySafe {
         maxGasPrice = type(uint256).max;
-        // Caller should call setMaxGasPrice(80 gwei) after execution
+        emergencyGasActive = true;
     }
 }

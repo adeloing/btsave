@@ -15,11 +15,11 @@ const fs = require('fs');
 // ============================================================
 // Config
 // ============================================================
-const RPC_URL = process.env.RPC_URL || 'https://0xrpc.io/sep';
-const MODULE_ADDRESS = '0x0e81f9cDE815709A73e609F7424B1Fa0FF7dc153';
+const RPC_URL = process.env.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com';
+const MODULE_ADDRESS = '0x40f7b06433f27B9C9C24fD5d60F2816F9344e04E';
 const AAVE_POOL_ADDRESS = '0x9266cBf2212E6A31CCAb3c60553d41613Cb0f93D';
 const BOT_NAME = process.env.BOT_NAME || 'BotA';
-const METRICS_PORT = process.env.METRICS_PORT || 9100;
+const METRICS_PORT = process.env.METRICS_PORT || 9101;
 const HEARTBEAT_INTERVAL = 10_000; // 10s
 
 // ============================================================

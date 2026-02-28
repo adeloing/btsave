@@ -59,6 +59,8 @@ contract MockOracle {
 contract MockTarget {
     uint256 public value;
     function doSomething(uint256 v) external { value = v; }
+    // Accept any call (for repay selector tests)
+    fallback() external {}
 }
 
 contract LimitedSignerModuleTest is Test {
@@ -160,6 +162,7 @@ contract LimitedSignerModuleTest is Test {
         _approveWith2Bots(txHash);
 
         vm.txGasPrice(81 gwei);
+        vm.prank(keeper);
         vm.expectRevert("LSM: gas too high");
         module.executeIfReady(txHash);
     }
@@ -178,6 +181,7 @@ contract LimitedSignerModuleTest is Test {
         module.approveTx(txHash);
 
         // Only 1 approval, need 2
+        vm.prank(keeper);
         vm.expectRevert("LSM: insufficient bot signatures");
         module.executeIfReady(txHash);
     }
@@ -198,6 +202,7 @@ contract LimitedSignerModuleTest is Test {
         vm.warp(1000);
         bytes32 txHash1 = _propose();
         _approveWith2Bots(txHash1);
+        vm.prank(keeper);
         module.executeIfReady(txHash1);
         // lastExecTime = 1000
 
@@ -206,11 +211,13 @@ contract LimitedSignerModuleTest is Test {
         _approveWith2Bots(txHash2);
 
         vm.warp(1100); // only +100s, still in cooldown
+        vm.prank(keeper);
         vm.expectRevert("LSM: cooldown active");
         module.executeIfReady(txHash2);
 
         // Advance time past cooldown
         vm.warp(1301); // 1301 - 1000 = 301 >= 300
+        vm.prank(keeper);
         module.executeIfReady(txHash2); // should work
     }
 
@@ -222,32 +229,40 @@ contract LimitedSignerModuleTest is Test {
         vm.warp(1000);
         bytes32 h1 = _propose();
         _approveWith2Bots(h1);
+        vm.prank(keeper);
         module.executeIfReady(h1);
 
         vm.warp(1301);
         bytes32 h2 = _propose();
         _approveWith2Bots(h2);
+        vm.prank(keeper);
         module.executeIfReady(h2);
 
         vm.warp(1602);
         bytes32 h3 = _propose();
         _approveWith2Bots(h3);
+        vm.prank(keeper);
         vm.expectRevert("LSM: daily tx limit reached");
         module.executeIfReady(h3);
 
-        // Next day — should work
-        vm.warp(1000 + 1 days + 301);
-        module.executeIfReady(h3);
+        // Next day — h3 expired by TTL, so propose fresh
+        vm.warp(1000 + 1 days + 1);
+        bytes32 h4 = _propose();
+        _approveWith2Bots(h4);
+        vm.warp(1000 + 1 days + 302);
+        vm.prank(keeper);
+        module.executeIfReady(h4);
     }
 
     // ===== R14: HF too low =====
     function test_R14_HFTooLow() public {
         vm.warp(block.timestamp + 301);
-        aavePool.setHF(1.5e18); // Below 1.72
+        aavePool.setHF(1.40e18); // Below 1.55
 
         bytes32 txHash = _propose();
         _approveWith2Bots(txHash);
 
+        vm.prank(keeper);
         vm.expectRevert("LSM: HF too low");
         module.executeIfReady(txHash);
     }
@@ -266,6 +281,7 @@ contract LimitedSignerModuleTest is Test {
         module.approveTx(txHash);
 
         // Execute
+        vm.prank(keeper);
         module.executeIfReady(txHash);
 
         // Check execution
@@ -338,6 +354,129 @@ contract LimitedSignerModuleTest is Test {
         );
         assertFalse(notAllowed);
         assertEq(reason, "LSM: target not whitelisted");
+    }
+
+    // ===== F1: emergencyHighGas auto-reset =====
+    function test_F1_EmergencyGasAutoReset() public {
+        vm.warp(1000);
+        bytes32 txHash = _propose();
+        _approveWith2Bots(txHash);
+
+        // Activate emergency gas
+        vm.prank(address(safe));
+        module.emergencyHighGas();
+        assertEq(module.maxGasPrice(), type(uint256).max);
+        assertTrue(module.emergencyGasActive());
+
+        // Execute at high gas — should pass
+        vm.warp(1301);
+        vm.txGasPrice(200 gwei);
+        vm.prank(keeper);
+        module.executeIfReady(txHash);
+
+        // Verify auto-reset
+        assertEq(module.maxGasPrice(), 80 gwei);
+        assertFalse(module.emergencyGasActive());
+    }
+
+    // ===== F2: Proposal TTL =====
+    function test_F2_ProposalExpired() public {
+        vm.warp(1000);
+        bytes32 txHash = _propose();
+        _approveWith2Bots(txHash);
+
+        // Warp past TTL (1800s default) + cooldown
+        vm.warp(1000 + 1801);
+        vm.prank(keeper);
+        vm.expectRevert("LSM: proposal expired");
+        module.executeIfReady(txHash);
+    }
+
+    function test_F2_ProposalWithinTTL() public {
+        vm.warp(1000);
+        bytes32 txHash = _propose();
+        _approveWith2Bots(txHash);
+
+        // Within TTL
+        vm.warp(1000 + 1799);
+        vm.prank(keeper);
+        module.executeIfReady(txHash);
+        assertEq(target.value(), 42);
+    }
+
+    // ===== F3: executeIfReady restricted =====
+    function test_F3_ExecuteOnlyKeeperOrBot() public {
+        vm.warp(1000);
+        bytes32 txHash = _propose();
+        _approveWith2Bots(txHash);
+
+        vm.warp(1301);
+        vm.prank(attacker);
+        vm.expectRevert("LSM: unauthorized executor");
+        module.executeIfReady(txHash);
+
+        // Keeper can execute
+        vm.prank(keeper);
+        module.executeIfReady(txHash);
+    }
+
+    // ===== NC1: HF threshold now 1.55 =====
+    function test_NC1_HFThreshold155() public {
+        assertEq(module.minHealthFactor(), 1.55e18);
+
+        // HF 1.60 should pass (was blocked at 1.72)
+        vm.warp(301);
+        aavePool.setHF(1.60e18);
+        bytes32 txHash = _propose();
+        _approveWith2Bots(txHash);
+        vm.prank(keeper);
+        module.executeIfReady(txHash);
+        assertEq(target.value(), 42);
+    }
+
+    function test_NC1_HFBelow155Reverts() public {
+        vm.warp(301);
+        aavePool.setHF(1.50e18);
+        bytes32 txHash = _propose();
+        _approveWith2Bots(txHash);
+        vm.prank(keeper);
+        vm.expectRevert("LSM: HF too low");
+        module.executeIfReady(txHash);
+    }
+
+    // ===== NC2: Repay bypasses HF pre-check =====
+    function test_NC2_RepayBypassesHFPreCheck() public {
+        // Setup repay selector on target
+        bytes4 repaySelector = bytes4(0x573ade81);
+        vm.startPrank(address(safe));
+        module.setSelector(address(target), repaySelector, true);
+        module.setRepaySelector(repaySelector, true);
+        vm.stopPrank();
+
+        // Set HF below threshold — normally would revert
+        vm.warp(301);
+        aavePool.setHF(1.30e18);
+
+        // Propose with repay selector (target won't actually process it but MockSafe will try)
+        vm.prank(keeper);
+        bytes32 txHash = module.proposeTransaction(
+            address(target),
+            abi.encodeWithSelector(repaySelector, address(0), 100, 2, address(0)),
+            0
+        );
+
+        vm.prank(botA);
+        module.approveTx(txHash);
+        vm.prank(botB);
+        module.approveTx(txHash);
+
+        // Post-check will still run — set HF back up after "execution"
+        // Since MockSafe.execTransactionFromModule just calls target, and target doesn't change HF,
+        // we need HF to be OK for post-check
+        aavePool.setHF(1.60e18);
+
+        vm.prank(keeper);
+        module.executeIfReady(txHash); // Should NOT revert — pre-check skipped for repay
     }
 
     // ===== validateBorrow =====

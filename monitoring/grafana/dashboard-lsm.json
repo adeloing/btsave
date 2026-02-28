@@ -1,0 +1,119 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "lsm-phase1",
+    "title": "LimitedSignerModule — Phase 1 (Observe-Only)",
+    "tags": ["btsave", "safe", "phase1"],
+    "timezone": "utc",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "panels": [
+      {
+        "id": 1,
+        "title": "📊 Tx Proposées (24h)",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+        "targets": [{ "expr": "increase(lsm_tx_proposed_total[24h])", "legendFormat": "Proposées" }],
+        "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{"color":"green","value":null},{"color":"yellow","value":10},{"color":"red","value":20}] } } }
+      },
+      {
+        "id": 2,
+        "title": "✅❌ Exécutées vs Rejetées",
+        "type": "piechart",
+        "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+        "targets": [
+          { "expr": "increase(lsm_tx_executed_total[24h])", "legendFormat": "Exécutées" },
+          { "expr": "increase(lsm_tx_rejected_total[24h])", "legendFormat": "Rejetées" }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "🔴 Module Status",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+        "targets": [{ "expr": "lsm_kill_switch_active", "legendFormat": "Kill Switch" }],
+        "fieldConfig": { "defaults": { "mappings": [{"type":"value","options":{"0":{"text":"🟢 ACTIVE","color":"green"},"1":{"text":"🔴 KILLED","color":"red"}}}] } }
+      },
+      {
+        "id": 4,
+        "title": "🤖 Bot Signatures (par bot)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+        "targets": [
+          { "expr": "increase(lsm_bot_approvals{bot=\"A\"}[1h])", "legendFormat": "Bot A (AWS)" },
+          { "expr": "increase(lsm_bot_approvals{bot=\"B\"}[1h])", "legendFormat": "Bot B (GCP)" },
+          { "expr": "increase(lsm_bot_approvals{bot=\"C\"}[1h])", "legendFormat": "Bot C (Hetzner)" }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "⏱️ Bot Latency (propose → approve)",
+        "type": "histogram",
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+        "targets": [{ "expr": "lsm_bot_approval_latency_seconds", "legendFormat": "{{bot}}" }],
+        "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "thresholds": { "steps": [{"color":"green","value":null},{"color":"yellow","value":5},{"color":"red","value":15}] } } }
+      },
+      {
+        "id": 6,
+        "title": "🚫 Rejections par Règle",
+        "type": "barchart",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+        "targets": [{ "expr": "increase(lsm_bot_rejection[24h])", "legendFormat": "{{rule}}" }],
+        "options": { "orientation": "horizontal" }
+      },
+      {
+        "id": 7,
+        "title": "❤️ Health Factor (live)",
+        "type": "gauge",
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 14 },
+        "targets": [{ "expr": "aave_health_factor", "legendFormat": "HF" }],
+        "fieldConfig": { "defaults": { "min": 1, "max": 4, "thresholds": { "steps": [{"color":"red","value":null},{"color":"red","value":1},{"color":"orange","value":1.72},{"color":"yellow","value":2},{"color":"green","value":2.5}] } } }
+      },
+      {
+        "id": 8,
+        "title": "📈 Daily Volume Utilisé",
+        "type": "bargauge",
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 14 },
+        "targets": [
+          { "expr": "lsm_daily_borrow_volume_usdc / 62400", "legendFormat": "Borrow %" },
+          { "expr": "lsm_daily_swap_volume_usdc / 62400", "legendFormat": "Swap %" }
+        ],
+        "fieldConfig": { "defaults": { "min": 0, "max": 1, "unit": "percentunit", "thresholds": { "steps": [{"color":"green","value":null},{"color":"yellow","value":0.6},{"color":"orange","value":0.8},{"color":"red","value":0.95}] } } }
+      },
+      {
+        "id": 9,
+        "title": "⛽ Gas Price vs Plafond",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 14 },
+        "targets": [
+          { "expr": "eth_gas_price_gwei", "legendFormat": "Gas Price" },
+          { "expr": "80", "legendFormat": "Plafond (80 gwei)" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "gwei", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "steps": [{"color":"green","value":null},{"color":"red","value":80}] } } }
+      },
+      {
+        "id": 10,
+        "title": "📋 Health Factor (historique)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+        "targets": [
+          { "expr": "aave_health_factor", "legendFormat": "HF" },
+          { "expr": "1.72", "legendFormat": "Min (1.72)" }
+        ],
+        "fieldConfig": { "defaults": { "custom": { "thresholdsStyle": { "mode": "line+area" } }, "thresholds": { "steps": [{"color":"transparent","value":null},{"color":"rgba(255,0,0,0.1)","value":1.72}] } } }
+      }
+    ],
+    "templating": { "list": [] },
+    "annotations": {
+      "list": [{
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "name": "Kill Switch Events",
+        "expr": "changes(lsm_kill_switch_active[1m]) > 0",
+        "tagKeys": "event",
+        "titleFormat": "⚠️ Kill Switch toggled"
+      }]
+    }
+  },
+  "overwrite": true
+}
