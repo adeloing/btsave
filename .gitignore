@@ -1,3 +1,4 @@
 
 .env
 contracts/.env
+node_modules/

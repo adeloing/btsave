@@ -713,4 +713,27 @@ app.post('/api/funding-reset', express.json(), (req, res) => {
   res.json({ ok: true, resetTimestamp: now });
 });
 
+// LSM Status endpoint
+app.get('/api/lsm-status', (req, res) => {
+  if (!req.session?.user) return res.status(401).json({ error: 'Not authenticated' });
+  
+  // Mock LSM data
+  const lsmData = {
+    active: true,
+    killed: false,
+    botThreshold: 2,
+    maxGasPrice: 80,
+    minHealthFactor: 1.55,
+    dailyTxCount: 0,
+    maxDailyTx: 20,
+    proposalTTL: 1800,
+    lastExecution: null,
+    moduleAddress: '0x40f7b06433f27B9C9C24fD5d60F2816F9344e04E',
+    network: 'sepolia',
+    grafanaUrl: 'https://ratpoison2.duckdns.org/grafana/'
+  };
+  
+  res.json(lsmData);
+});
+
 app.listen(PORT, '0.0.0.0', () => console.log('Dashboard running on 0.0.0.0:' + PORT));
