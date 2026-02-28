@@ -72,8 +72,8 @@
     object-fit: cover;
     display: block;
   }
-  /* Green dollar tint on the bottom half (the bills/sea area) */
-  .hero-wrap::after {
+  /* Green dollar tint on the bottom half (storm image only) */
+  .hero-wrap.storm::after {
     content: '';
     position: absolute;
     bottom: 0;
@@ -150,19 +150,19 @@
     <span id="btnText">Connect Wallet</span>
   </button>
 
-  <!-- Hero illustration -->
+  <!-- Hero illustration — switches based on current step -->
   <div class="hero-wrap">
-    <img src="tpb-hero-cropped.jpg" alt="Turbo Paper Boat — orange paper boat on a sea of dollar bills">
+    <img id="heroImg" src="tpb-step0-dock.jpg" alt="Turbo Paper Boat — orange paper boat docked at a sunny pier">
   </div>
 
   <!-- Metrics bar: 6 metrics -->
   <div class="metrics">
     <div class="metric" data-metric="current-step">
-      <div class="metric-value" id="currentStep" style="color:#3aae4a">3</div>
+      <div class="metric-value" id="currentStep" style="color:#3aae4a">0</div>
       <div class="metric-label">Current Step</div>
     </div>
     <div class="metric" data-metric="total-steps">
-      <div class="metric-value" id="totalSteps" style="color:#3aae4a">12</div>
+      <div class="metric-value" id="totalSteps" style="color:#3aae4a">0</div>
       <div class="metric-label">Steps Hit</div>
     </div>
     <div class="metric" data-metric="tvl">
@@ -185,6 +185,31 @@
 </div>
 
 <script>
+// Hero image switches based on current step
+// Step 0 = calm dock, Step 1+ = storm sea
+const HERO_IMAGES = {
+  calm: 'tpb-step0-dock.jpg',
+  storm: 'tpb-hero-cropped.jpg'
+};
+
+function updateHero(step) {
+  const img = document.getElementById('heroImg');
+  const wrap = document.querySelector('.hero-wrap');
+  if (step === 0) {
+    img.src = HERO_IMAGES.calm;
+    wrap.classList.remove('storm');
+  } else {
+    img.src = HERO_IMAGES.storm;
+    wrap.classList.add('storm');
+  }
+}
+
+// Initialize from displayed step value
+document.addEventListener('DOMContentLoaded', () => {
+  const step = parseInt(document.getElementById('currentStep').textContent) || 0;
+  updateHero(step);
+});
+
 async function connectWallet() {
   const btn = document.getElementById('connectBtn');
   const txt = document.getElementById('btnText');
