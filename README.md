@@ -1,9 +1,11 @@
 # BTSAVE ⚡
 
-## Turbo Paper Boat Vault — Hybrid ZERO-LIQ BTC Accumulator
+## Turbo Paper Boat (TPB) — Hybrid ZERO-LIQ BTC Accumulator
 
 > Version 2 — 28 février 2026
 > Répartition **82/15/3** · NAV-Based Token · Gnosis Safe + LSM · L1 Ethereum
+>
+> **BTSAVE** = l'entreprise · **Turbo Paper Boat (TPB)** = le produit (token)
 
 ---
 
