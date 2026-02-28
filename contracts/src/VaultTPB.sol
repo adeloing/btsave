@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "./LimitedSignerModule.sol";
+import "./NFTBonus.sol";
 
 /**
  * @title VaultTPB — Turbo Paper Boat Vault
@@ -96,6 +97,9 @@ contract VaultTPB {
     // --- Auto-Redeem Registry ---
     address[] public autoRedeemUsers;  // Users with autoRedeemPct > 0
     mapping(address => bool) public isAutoRedeemRegistered;
+
+    // --- NFT Bonus ---
+    NFTBonus public nftContract;
 
     // --- Treasury ---
     address public treasury;
@@ -691,6 +695,39 @@ contract VaultTPB {
     function updateATH(uint256 newATH) external onlySafe {
         require(newATH > cycleATH, "TPB: ATH must increase");
         cycleATH = newATH;
+    }
+
+    function setNFTContract(address _nft) external onlySafe {
+        nftContract = NFTBonus(_nft);
+    }
+
+    /**
+     * @notice Mint cycle NFT for a user. Called by keeper after cycle ends.
+     *         Eligibility: held >= MIN_NFT_DEPOSIT worth of TPB through entire cycle.
+     * @param user User address
+     * @param tier 1=Bronze, 2=Silver, 3=Gold, 4=Platinum
+     */
+    function mintCycleNFT(address user, uint8 tier) external {
+        require(
+            lsm.allowedKeepers(msg.sender) || msg.sender == safe,
+            "TPB: unauthorized"
+        );
+        require(address(nftContract) != address(0), "TPB: no NFT contract");
+        require(!cycleActive || currentCycle == 1, "TPB: cycle still active");
+
+        // Eligibility: user must have balance
+        require(balanceOf[user] > 0, "TPB: no position");
+
+        nftContract.mintCycleNFT(user, currentCycle, tier);
+    }
+
+    /**
+     * @notice Get a user's NFT bonus multiplier (delegates to NFTBonus contract).
+     * @return multiplierBps Bonus in BPS (10000 = 1.00×)
+     */
+    function getUserBonusMultiplier(address user) external view returns (uint256) {
+        if (address(nftContract) == address(0)) return 10000;
+        return nftContract.getBonusMultiplier(user);
     }
 
     /// @notice Emergency pause
