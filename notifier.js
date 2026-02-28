@@ -5,8 +5,8 @@ const puppeteer = require('puppeteer');
 const fs = require('fs').promises;
 
 // === CONFIG ===
-const BOT_TOKEN = 'REDACTED_BOT_TOKEN';
-const CHAT_ID = 'REDACTED_CHAT_ID';
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const POLL_INTERVAL = 30000; // 30s as requested
 const DASHBOARD_URL = 'http://localhost:3001';
 

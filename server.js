@@ -20,8 +20,8 @@ const PORT = 3001;
 // === AUTH CONFIG ===
 const SESSION_SECRET = 'btsave-kei-' + crypto.randomBytes(8).toString('hex');
 const USERS = {
-  xou: { hash: crypto.createHash('sha256').update('REDACTED_PASSWORD').digest('hex'), role: 'admin' },
-  mael: { hash: crypto.createHash('sha256').update('mael').digest('hex'), role: 'readonly' }
+  xou: { hash: process.env.DASH_XOU_HASH || crypto.createHash('sha256').update(process.env.DASH_XOU_PWD || 'changeme').digest('hex'), role: 'admin' },
+  mael: { hash: process.env.DASH_MAEL_HASH || crypto.createHash('sha256').update(process.env.DASH_MAEL_PWD || 'changeme').digest('hex'), role: 'readonly' }
 };
 
 app.use(session({

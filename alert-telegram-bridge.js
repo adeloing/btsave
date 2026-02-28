@@ -5,8 +5,8 @@
 const http = require('http');
 const https = require('https');
 
-const BOT_TOKEN = 'REDACTED_BOT_TOKEN';
-const CHAT_ID = 'REDACTED_CHAT_ID';
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const PORT = 9102;
 
 function sendTelegram(text) {
