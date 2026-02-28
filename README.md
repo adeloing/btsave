@@ -1,27 +1,24 @@
 # BTSAVE ⚡
 
-## Hybrid ZERO-LIQ Aggressive Accumulator + Quarterly Contango Hedge
+## Turbo Paper Boat Vault — Hybrid ZERO-LIQ BTC Accumulator
 
-> Version finale verrouillée — 18 février 2026  
-> Répartition **79/18/3** · Health Factor Only · Puts Auto · L1 Ethereum
+> Version 2 — 28 février 2026
+> Répartition **82/15/3** · NAV-Based Token · Gnosis Safe + LSM · L1 Ethereum
 
 ---
 
 ## Sommaire
 
 - [Philosophie](#philosophie)
-- [Architecture](#architecture)
+- [TPB Token](#tpb-token)
+- [Architecture Smart Contracts](#architecture-smart-contracts)
 - [Cycle de vie](#cycle-de-vie)
-- [Variables du cycle](#variables-du-cycle)
-- [Exécution par palier](#exécution-par-palier)
-- [Gestion par Health Factor](#gestion-par-health-factor)
-- [Protection Puts OTM](#protection-puts-otm)
-- [Équilibrages](#équilibrages)
-- [Infrastructure technique](#infrastructure-technique)
-- [Dashboard de production](#dashboard-de-production)
-- [Simulateur](#simulateur)
-- [Monitoring & Notifications](#monitoring--notifications)
-- [Sécurité](#sécurité)
+- [Stratégie d'accumulation](#stratégie-daccumulation)
+- [Mécaniques Utilisateur](#mécaniques-utilisateur)
+- [NFT Bonus System](#nft-bonus-system)
+- [Sécurité & LSM](#sécurité--lsm)
+- [Infrastructure](#infrastructure)
+- [Dashboard & Monitoring](#dashboard--monitoring)
 
 ---
 
@@ -29,50 +26,95 @@
 
 BTSAVE transforme chaque baisse du BTC en accumulation nette permanente, avec un risque de liquidation strictement nul.
 
-**Principe** : à chaque nouvel ATH, on ne vend que la portion minimale du WBTC accumulé pendant le cycle (P2) pour rembourser 100 % de la dette AAVE. Tout le reste est du BTC net gagné. Les profits Deribit (carry contango + puts) sont du bonus pur.
+**Principe** : à chaque nouvel ATH, on ne vend que la portion minimale du WBTC accumulé pour rembourser 100 % de la dette AAVE. Tout le reste est du BTC net gagné. Les profits Deribit (carry contango + puts) sont du bonus pur.
 
-**Pourquoi ça marche** :
-- Le BTC fait des nouveaux ATH → chaque cycle se clôture en profit net BTC
-- Entre les ATH, on accumule agressivement dans les dips
-- Le buffer 18 % USDC + puts OTM + exécution < 1h = liquidation impossible
-- Le carry contango des shorts finance les puts → couverture quasi gratuite
+**Pour l'utilisateur** : déposer du WBTC → recevoir des TPB tokens → attendre → recevoir des TPB bonus à chaque nouvel ATH → redeem en WBTC.
 
 ---
 
-## Architecture
+## TPB Token
+
+**Turbo Paper Boat (TPB)** — ERC-20, 8 decimals (= satoshis).
+
+| Propriété | Détail |
+|-----------|--------|
+| **Mint** | NAV-based (ERC-4626 style) |
+| **Premier dépôt** | 1 WBTC = 1e8 TPB (1:1) |
+| **Dépôts suivants** | `shares = (wbtcAmount × totalSupply) / totalAssets` |
+| **Transferable** | Oui — libre trade sur DEX dès le mint |
+| **Redeem** | Burn TPB → WBTC pro-rata, **uniquement step 0 (post-ATH, pre-lock)** |
+| **Pas de retrait mid-cycle** | Feature, pas bug — force la conviction |
+
+### NAV-Based Minting
+
+Le prix d'entrée reflète la valeur réelle du vault. Si la stratégie a généré 20% de gains, un nouveau déposant reçoit proportionnellement moins de TPB — **les early holders ne sont jamais dilués**.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  AAVE V3 Core                   │
-│              Ethereum L1 (mainnet)              │
-│                                                 │
-│  ┌──────────┐  ┌──────────┐                     │
-│  │ aEthWBTC │  │  aEthUSDC │                    │
-│  │  79 %    │  │   18 %    │  ← Collateral      │
-│  └──────────┘  └──────────┘                     │
-│       │                                         │
-│       │  Borrow USDC → DeFiLlama → aEthWBTC    │
-│       ▼        (accumulation loop)              │
-│  ┌──────────┐                                   │
-│  │ Debt USDC│  ← Remboursé à 100 % au reset    │
-│  └──────────┘                                   │
-│                                                 │
-│  LTV max: 73 % · Liq Threshold: 78 %           │
-└─────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────┐
-│                   DERIBIT                        │
-│                                                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
-│  │ USDC 3%  │  │ Short    │  │ Puts OTM │      │
-│  │ (margin) │  │ BTC-PERP │  │ (protect) │     │
-│  └──────────┘  └──────────┘  └──────────┘      │
-│                                                 │
-│  Sell stops grid ─── carry contango ─── puts    │
-└─────────────────────────────────────────────────┘
-
-Swaps : DeFiLlama (meilleur agrégateur L1)
+totalAssets = WBTC dans le vault + WBTC déployé dans la stratégie (Safe)
+sharePrice  = totalAssets / totalSupply
 ```
+
+### Trading sur DEX
+
+Le TPB est librement tradable. En bear market, il tradera probablement sous le NAV sur Uniswap — c'est du alpha gratuit pour les contrarians qui achètent le dip. Ceux qui bradent en plein crash financent ceux qui tiennent.
+
+---
+
+## Architecture Smart Contracts
+
+```
+┌──────────────────────────────────────────────────┐
+│                  VaultTPB.sol                      │
+│          ERC-20 TPB Token + Vault Logic            │
+│                                                    │
+│  deposit(WBTC) → mint TPB (NAV-based)             │
+│  redeem(TPB) → burn + WBTC pro-rata (step 0)     │
+│  setAutoRedeem(bps) → auto à chaque ATH           │
+│  endCycleAndReward() → mint bonus TPB pro-rata    │
+│                                                    │
+│  Pending Pool → rebalance hebdo ou seuil 2%       │
+│  Lock/Unlock → ATH-5% trigger                     │
+└───────────────────┬──────────────────────────────┘
+                    │ owns / controls
+┌───────────────────▼──────────────────────────────┐
+│           LimitedSignerModule v3 (LSM)            │
+│              Gnosis Safe Module                    │
+│                                                    │
+│  19 règles on-chain (R1-R19)                      │
+│  Multi-bot consensus (2/3 minimum)                │
+│  Kill switch (2/2 Safe owners only)               │
+│  HF threshold: 1.55                               │
+│  Proposal TTL: 30 min                             │
+│  Daily volume caps (borrow + swap)                │
+│  Target/selector whitelisting                     │
+│  Code hash pinning (R9)                           │
+└───────────────────┬──────────────────────────────┘
+                    │ executes via
+┌───────────────────▼──────────────────────────────┐
+│              Gnosis Safe (2/2 multisig)           │
+│                                                    │
+│  Owners: xou + mael (humains)                     │
+│  Bots = NOT owners, execute via Module only       │
+│  Threshold 2/2 pour kill switch + admin           │
+└──────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────┐
+│               NFTBonus.sol (ERC-1155)              │
+│                                                    │
+│  4 tiers: Bronze / Silver / Gold / Platinum       │
+│  Bonus multiplier sur les rewards TPB             │
+│  Trading encouragé — vérifié à l'instant T        │
+│  1 NFT / cycle / utilisateur (min 100 USDC)      │
+└──────────────────────────────────────────────────┘
+```
+
+### Répartition du capital
+
+| Compartiment | % | Rôle |
+|---|---|---|
+| WBTC AAVE V3 | 82% | Collateral principal |
+| USDC AAVE V3 | 15% | Buffer anti-liquidation |
+| USDC Deribit | 3% | Margin shorts + puts |
 
 ---
 
@@ -81,240 +123,279 @@ Swaps : DeFiLlama (meilleur agrégateur L1)
 Un cycle **commence et se termine uniquement à un nouvel ATH ratcheté**.
 
 ```
-Nouvel ATH détecté
-    │
-    ├─ Fermer tous les shorts Deribit (profits = bonus net)
-    ├─ Calculer dette totale AAVE
-    ├─ Vendre la portion minimale de WBTC accumulé (P2) via DeFiLlama
-    │   pour générer exactement le montant USDC de remboursement
-    ├─ Rembourser 100 % dette AAVE
-    ├─ Conserver tout le WBTC restant → gain net permanent
-    ├─ Rééquilibrer le collateral en 79/18/3
-    └─ Nouveau cycle : recalculer toutes les variables
+1. Nouvel ATH détecté (prix > currentATH)
+   │
+   ├─ Clôturer tous les shorts Deribit
+   ├─ Calculer performance nette du cycle (en sats)
+   ├─ Rembourser 100% dette AAVE (vente minimale WBTC)
+   ├─ endCycleAndReward() :
+   │   ├─ Mint bonus TPB pro-rata aux holders
+   │   ├─ Appliquer multiplicateur NFT
+   │   ├─ Exécuter auto-redeems
+   │   └─ Reset cycle (nouveau ATH, step 0, unlock)
+   ├─ Rééquilibrer 82/15/3
+   └─ Nouveau cycle
+   
+2. Prix atteint ATH - 5%
+   │
+   └─ lockVault() : redemptions bloquées
+   
+3. Prix descend par paliers de 5%
+   │
+   ├─ advanceStep() : step++
+   ├─ Short BTC (Deribit sell stop auto)
+   ├─ Borrow USDC sur AAVE
+   ├─ Swap → WBTC (DeFiLlama)
+   └─ WBTC accumulé en collateral
 ```
 
-**Règle absolue** : on ne se couvre jamais contre la hausse. Les shorts restent ouverts pour maximiser le contango.
+### Variables du cycle (exemple ATH $126k)
+
+| Variable | Formule | Valeur |
+|----------|---------|--------|
+| `step_size` | ATH × 5% | $6,300 |
+| `borrow_per_step` | WBTC_start × 3,200 | 12,480 USDC |
+| `short_per_step` | WBTC_start × 0.0244 | 0.095 BTC |
 
 ---
 
-## Variables du cycle
+## Stratégie d'accumulation
 
-Toutes les variables sont **fixes** dès le début du cycle. Aucun ajustement en cours de route.
+### À chaque palier de baisse (−5%)
 
-| Variable | Formule | Cycle actuel (ATH $126k) |
-|----------|---------|--------------------------|
-| `ATH` | Prix spot au moment du reset | $126,000 |
-| `WBTC_start` | Quantité WBTC dans AAVE après reset | 3.90 BTC |
-| `step_size` | ATH × 0.05 | $6,300 |
-| `buffer_USDC_AAVE` | WBTC_start × ATH × 0.18 | $88,452 |
-| `USDC_Deribit_target` | WBTC_start × ATH × 0.03 | $14,742 |
-| `borrow_per_step` | WBTC_start × 3,200 (arrondi 100) | 12,480 USDC |
-| `short_per_step` | WBTC_start × 0.0244 (arrondi 3 déc.) | 0.095 BTC |
+**Automatisé (Deribit)** :
+- Stop Market SELL se déclenche (short grid)
+- Carry contango/funding toutes les 8h
 
-**19 paliers possibles** de l'ATH au fond (ATH − 19 × step = $6,300).
-
----
-
-## Exécution par palier
-
-À chaque franchissement de palier de 5 % **à la baisse** :
-
-### Automatisé (Deribit)
-- Stop Market SELL `short_per_step` BTC se déclenche
-- Accrual contango/funding toutes les 8h
-
-### Manuel (AAVE + DeFiLlama)
-1. Borrow `borrow_per_step` USDC sur AAVE
-2. Swap USDC → WBTC via DeFiLlama
-3. Le WBTC arrive directement en aEthWBTC (collateral)
-4. Vérifier le Health Factor
+**Via LSM + Safe** :
+1. Borrow USDC sur AAVE V3
+2. Swap USDC → WBTC via DeFiLlama (meilleur agrégateur L1)
+3. WBTC déposé en collateral AAVE
+4. Vérification HF post-opération
 
 ### À la hausse
-Aucune action. Garder tous les shorts ouverts pour maximiser le carry.
+
+Aucune action. Shorts restent ouverts pour le contango.
+
+### Gestion par Health Factor
+
+```
+HF ≥ 1.55    ✅ Accumulation normale
+HF 1.40–1.55 👁️ Monitor renforcé
+HF < 1.40    🛑 STOP emprunts
+HF ≤ 1.30    ⚠️ Vendre 50% puts → rembourser 25% dette
+HF ≤ 1.25    🔶 Vendre puts restants → rembourser 40% dette
+HF < 1.15    🚨 Vendre tout → rembourser max
+```
+
+### Protection Puts OTM
+
+Couverture automatique du WBTC accumulé, financée par le carry contango.
+
+| WBTC Extra | Couverture | Strike |
+|-----------|------------|--------|
+| ≥ 6% | 60% du extra | −26% à −28% OTM |
+| ≥ 14% | 85% du extra | −23% à −24% OTM |
+| ≥ 24% | 100% du extra | −21% OTM |
 
 ---
 
-## Gestion par Health Factor
+## Mécaniques Utilisateur
 
-**Toutes les décisions** dépendent exclusivement du Health Factor AAVE. Le prix spot n'est qu'un déclencheur d'accumulation, jamais une limite.
+### Deposit
 
-```
-HF ≥ 1.50    ✅ Accumulation normale (aucune restriction)
-HF 1.40–1.50 👁️ Monitor renforcé (emprunts toujours autorisés)
-HF < 1.40    🛑 STOP total nouveaux emprunts
-HF ≤ 1.30    ⚠️ Vendre 50 % puts → rembourser 25 % dette
-HF ≤ 1.25    🔶 Vendre puts restants → rembourser 40 % dette
-HF < 1.15    🚨 Vendre tout → rembourser max (ultra-défensif)
+```solidity
+vault.deposit(wbtcAmount)
+// → WBTC transféré au vault
+// → TPB mintés (NAV-based)
+// → WBTC en pending pool
 ```
 
-### Pourquoi HF et pas le prix ?
+### Redeem (step 0 uniquement)
 
-Le prix seul ne dit rien sur le risque réel. Avec le même prix à -30 %, le HF peut être à 1.8 (si peu de dette) ou à 1.3 (si beaucoup emprunté). Le HF capture la réalité : collateral × liquidation_threshold / dette.
+```solidity
+vault.redeem(tpbAmount)
+// → TPB brûlés
+// → WBTC restitués pro-rata de totalAssets
+// Bloqué si step > 0 ou vault locked
+```
 
-Le buffer 18 % USDC agit comme amortisseur : il ne fluctue pas avec le prix BTC, ce qui maintient le HF plus stable que dans une position 100 % WBTC.
+### Auto-Redeem
+
+```solidity
+vault.setAutoRedeem(5000) // 50% en BPS
+// → Exécuté automatiquement à chaque fin de cycle (nouvel ATH)
+// → Pro-rata si demande > liquidité disponible
+```
+
+### Pending Pool & Rebalancing
+
+Les dépôts ne sont pas immédiatement déployés dans la stratégie :
+- **Rebalance hebdomadaire** : keeper déploie le pending pool vers le Safe
+- **Ou seuil 2%** : si pending > 2% du TVL déployé, rebalance déclenchable
+- Le WBTC part au Safe pour être réparti en 82/15/3
+
+### Preview
+
+```solidity
+vault.previewRedeem(tpbAmount) // → combien de WBTC on recevrait
+vault.totalAssets()            // → WBTC vault + WBTC Safe
+```
 
 ---
 
-## Protection Puts OTM
+## NFT Bonus System
 
-Automatisation basée sur le **WBTC accumulé** et le **HF courant**.
+**ERC-1155** — 4 tiers, attribués en fin de cycle.
 
-### Variable de tracking
+| Tier | Conditions | Multiplicateur ≈ |
+|------|-----------|-------------------|
+| 🥉 Bronze | Participation au cycle | 1.05x |
+| 🥈 Silver | Holding significatif | 1.15x |
+| 🥇 Gold | Holding important | 1.5x-2x |
+| 💎 Platinum | Top holder | 2.5x+ |
 
-```
-WBTC_extra_percent = (WBTC_total_AAVE − WBTC_start) / WBTC_start × 100
-```
-
-### Déclenchement achat / roll
-
-| Condition | Couverture | Strike | Expiry |
-|-----------|------------|--------|--------|
-| Extra ≥ 6 % **ET** HF ≥ 1.68 | 60 % du WBTC extra | −26 % à −28 % OTM | 45–60 j |
-| Extra ≥ 14 % **ET** HF ≥ 1.56 | 85 % du WBTC extra | −23 % à −24 % OTM | 35–50 j |
-| Extra ≥ 24 % (tout HF > 1.35) | 100 % du WBTC extra | −21 % OTM | 30–45 j |
-
-### Ajustements dynamiques par HF
-
-| HF | Ajustement |
-|----|------------|
-| 1.55–1.70 | +15 points couverture, strike resserré de 2 % |
-| 1.40–1.55 | Direct 100 % couverture + strike −20 % |
-| < 1.40 | Arrêt achat → mode monétisation uniquement |
-
-### Contraintes pratiques
-- **Taille minimale** : WBTC extra ≥ 0.20 BTC (~$20-25k) pour éviter les micro-TX L1
-- **Roll** : automatique tous les 30–35 jours si condition toujours remplie
-- **Financement** : 100 % sur le cash carry Deribit (jamais le buffer 18 %)
+**Règles** :
+- 1 NFT par cycle par utilisateur (min 100 USDC)
+- NFT du cycle en cours exclu du bonus (sauf cycle 1)
+- Vérification de la collection à l'instant T (fin de cycle)
+- **Trading encouragé** : acheter/vendre des NFTs pour optimiser sa collection
+- Pas de mémoire permanente — seul le `balanceOf` au moment du reward compte
+- Le bonus s'applique comme multiplicateur sur le reward TPB minté
 
 ---
 
-## Équilibrages
+## Sécurité & LSM
 
-| Type | Méthode |
-|------|---------|
-| **Intra-AAVE** | DeFiLlama uniquement (emprunt USDC → aEthWBTC). Aucun Collateral Swap pendant le cycle. |
-| **AAVE ↔ Deribit** | Via HF (vente puts / profits shorts → repay dette). Transfert cash carry tous 7–14 jours. |
-| **Reset 79/18/3** | Au nouvel ATH uniquement. Ajustement manuel du collateral. |
+### Defense in Depth
+
+```
+Bots off-chain (observe + filter)
+        │
+        ▼
+LimitedSignerModule v3 (on-chain judge, 19 rules)
+        │
+        ▼
+Gnosis Safe 2/2 (human final authority)
+```
+
+### 19 Règles LSM (R1-R19)
+
+| Règle | Description |
+|-------|-------------|
+| R1 | Seuls les keepers/bots autorisés |
+| R2-R3 | Whitelisting targets + selectors |
+| R4 | Kill switch check |
+| R5 | Gas price < plafond (80 gwei, auto-reset) |
+| R6 | Nonce séquentiel |
+| R7 | `approve()` bloqué sauf spenders whitelistés |
+| R8 | Pas de `delegatecall` |
+| R9 | Code hash pinning (1inch, AAVE Pool, Oracle) |
+| R10-R11 | Pas de `value` (ETH), data non-vide |
+| R12 | Daily tx limit |
+| R13-R14 | Daily volume caps (borrow + swap) |
+| R15 | HF pre-check ≥ 1.55 (bypass pour repay) |
+| R16-R17 | Multi-bot consensus (2/3 min) |
+| R18 | Proposal TTL (30 min, auto-expire) |
+| R19 | `executeIfReady` restricted to keepers |
+
+### Kill Switch
+
+- Activable uniquement par les 2 Safe owners (2/2 multisig)
+- Bloque **toutes** les opérations via Module
+- Aucun bot ne peut désactiver
+
+### Risque de liquidation : 0%
+
+1. Buffer 15% USDC (ne fluctue pas avec BTC)
+2. Règles HF strictes (stop à 1.40, repay dès 1.30)
+3. Puts OTM automatiques
+4. Exécution < 1h (L1 Ethereum direct)
 
 ---
 
-## Infrastructure technique
+## Infrastructure
 
 ### Stack
 
 ```
-Node.js + Express
-├── server.js          Dashboard API (AAVE on-chain + Deribit REST)
-├── notifier.js        Bot Telegram de notifications (@BTSave_bot)
-├── public/
-│   ├── index.html     Dashboard production (mobile-first)
-│   ├── simu.html      Interface simulateur
-│   └── simu.js        Moteur de simulation HF-based
-└── grid-ws/
-    └── grid-ws.js     WebSocket Deribit (fill detection)
+contracts/
+├── src/
+│   ├── VaultTPB.sol              # Vault + ERC-20 TPB token
+│   ├── LimitedSignerModule.sol   # LSM v3 (Gnosis Safe Module)
+│   ├── NFTBonus.sol              # ERC-1155 bonus NFTs
+│   └── MockContracts.sol         # Mocks pour tests
+├── test/
+│   ├── VaultTPB.t.sol            # 36 tests
+│   └── LimitedSignerModule.t.sol # 30 tests
+└── script/
+    └── DeployPhase1.s.sol        # Déploiement Sepolia
+
+bot-observe/
+├── index.js                      # Bot observer (Phase 1)
+└── keeper-test.js                # Tests d'intégration Sepolia
+
+server.js                         # Dashboard Express
+alert-telegram-bridge.js          # Prometheus → Telegram
 ```
 
-### Données en temps réel
+### Tests
 
-- **AAVE** : lecture on-chain via Etherscan (Pool contract, UserAccountData)
-- **Deribit** : REST API (positions, ordres, options) + WebSocket (fills)
-- **Prix BTC** : Deribit TradingView chart data (candles 15min)
-- **Gas ETH** : estimation coût swap L1 en temps réel
+```bash
+# 66 tests total (36 VaultTPB + 30 LSM)
+cd contracts && forge test -vv
+```
 
----
+### Déploiement (Sepolia)
 
-## Dashboard de production
-
-Interface mobile-first avec rafraîchissement auto 60s.
-
-### Sections
-- **Header** : prix BTC, step actuel, répartition live, ATH, pas
-- **Paramètres du cycle** : buffer, cible Deribit, emprunt/palier, short/palier
-- **Solde ETH** : balance + coût gas swap estimé
-- **Chart** : candles 24h avec annotations (steps, prix courant)
-- **AAVE V3** : HF, collateral détaillé, dette, LTV, net, prix liquidation
-- **BTC Net @ ATH** : projection du gain net au prochain reset
-- **Grid Gains** : P&L cumulé des fills grid
-- **Deribit** : equity, ordres ouverts, positions futures, positions options (avec boutons CLOSE admin)
-- **Prochaines actions** : recommandations HF-based contextuelles
-- **Règles de gestion** : zones HF avec zone active surlignée
-
-### Accès
-- **Admin** : contrôle complet + fermeture de positions
-- **Readonly** : monitoring sans actions de trading
+Dernières adresses (DeployAll2) :
+- Vault: `0xbB5AA31D849860e5A6D3b288DD33177667115678`
+- Safe: `0x6727...e8`
+- NFT: `0x208B...d7`
+- Deployer/Keeper: `0x490CE9212cf474a5A73936a8d25b5Ef46751a58f`
 
 ---
 
-## Simulateur
+## Dashboard & Monitoring
 
-Moteur de simulation complet avec calcul HF réel (formule AAVE V3).
+### Dashboard Web
 
-### Fonctionnalités
-- Entrée du prix spot → calcul automatique du step, HF, zone
-- Simulation step-by-step de la descente avec accumulation
-- Tracking WBTC extra, dette, HF à chaque palier
-- Application automatique des règles HF (stop emprunt, vente puts, repay)
-- Visualisation P&L au reset (BTC net gagné par cycle)
-- Stress test : scénarios -50 %, -70 %, -90 %
+Interface mobile-first : prix BTC, step actuel, HF, collateral AAVE, positions Deribit, grid gains, recommandations.
 
----
+**Accès** : `https://ratpoison2.duckdns.org/hedge/`
 
-## Monitoring & Notifications
+### Grafana
 
-### Bot Telegram (@BTSave_bot)
+Métriques Prometheus : tx proposées/exécutées/rejetées, HF live, gas, volume daily, bot latency, rejections par règle.
 
-Notifications image + caption à chaque franchissement de palier :
-- Direction (↘️ baisse / ↗️ hausse)
-- Numéro de step
-- Prix
-- Zone de gestion
-- Actions automatiques et manuelles à réaliser
+**Accès** : `https://ratpoison2.duckdns.org/grafana/d/lsm-phase1/`
 
-### WebSocket Monitor (grid-ws)
+### Alerting
 
-Service `deribit-grid-ws` (systemd) :
-- Connexion WebSocket permanente à Deribit
-- Détection instantanée des fills (sell stops)
-- Notification Telegram avec rappel des actions manuelles
-- Tracking des fills du cycle
-
-### Sanity Check (cron 12h)
-
-Vérification automatique toutes les 12h :
-- Status du service WebSocket
-- Prix BTC actuel
-- Cohérence des ordres sell stops
-- Position perp + options
-- Mise à jour du fichier d'état
+Prometheus → Alertmanager → Telegram Bridge → @BTSave_bot
 
 ---
 
-## Sécurité
+## Business
 
-### Risque de liquidation : 0 %
+### Associés
+- **xou** — Architecture, stratégie, développement
+- **Mael** — Crypto ops, expérience tokens Solana
 
-Quatre couches de protection :
+### Token Vision
 
-1. **Buffer 18 % USDC** : ne fluctue pas avec le prix BTC, stabilise le HF
-2. **Règles HF strictes** : stop emprunt à HF 1.40, monétisation puts dès HF 1.30
-3. **Puts OTM automatiques** : protection du WBTC accumulé
-4. **Exécution < 1h** : L1 Ethereum, pas de bridge, pas de L2
+Token "anti-shitcoin" adossé à du BTC réel. Plus le marché crashe, plus on accumule pas cher. Trois sources de revenus :
+1. Accumulation BTC (gains de cycle)
+2. Grid gains (contango + shorts)
+3. Trading du propre token (arbitrage NAV)
 
-Même sans puts et en ignorant toutes les règles, le HF reste > 1.75 en cas de crash total grâce au buffer USDC.
+### Roadmap
 
-### Authentification
-- Session Express avec login/password
-- Rôles admin / readonly
-- Pas d'API keys exposées côté client
-
----
-
-## Évolutivité
-
-La stratégie est **100 % réutilisable à vie**. Chaque cycle est indépendant et entièrement déterministe. Les seules entrées sont : le prix spot BTC et le HF AAVE.
-
-**Version finale verrouillée le 18 février 2026.**
+- [x] Phase 1 : Observe-only bot + monitoring
+- [x] Phase 2 : Smart contracts (VaultTPB v2 + LSM v3 + NFTBonus)
+- [ ] Phase 3 : Déploiement mainnet + audit
+- [ ] Phase 4 : Token public + DEX listing
 
 ---
 
-*BTSAVE — Parce que chaque dip est une opportunité, pas un risque.*
+*BTSAVE — Parce que chaque dip est une opportunité, pas un risque.* ⚡
