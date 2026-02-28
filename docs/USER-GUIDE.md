@@ -1,13 +1,13 @@
-# ✅ Documentation Utilisateur Officielle – BTSAVE Vault & Token TPB
+# ✅ Documentation Utilisateur Officielle – Turbo Paper Boat (TPB)
 
 > Version 1.0 – 28 février 2026
 > Projet open-source : https://github.com/adeloing/btsave
 
 ---
 
-## 1. Qu'est-ce que BTSAVE ?
+## 1. Qu'est-ce que Turbo Paper Boat ?
 
-BTSAVE est un vault de stratégie d'accumulation BTC agressive et zéro-liquidation sur Ethereum L1. Il transforme chaque baisse de prix du Bitcoin en gain net de BTC tout en protégeant strictement le capital grâce à :
+**Turbo Paper Boat (TPB)** est le produit phare de **BTSAVE** — un token vault d'accumulation BTC agressive et zéro-liquidation sur Ethereum L1. Il transforme chaque baisse de prix du Bitcoin en gain net de BTC tout en protégeant strictement le capital grâce à :
 
 - **AAVE V3** (collateral WBTC + buffer USDC)
 - **Short BTC-PERP sur Deribit** (carry contango)
@@ -17,11 +17,13 @@ BTSAVE est un vault de stratégie d'accumulation BTC agressive et zéro-liquidat
 
 **Objectif** : maximiser l'exposition BTC long-term tout en minimisant les risques de liquidation.
 
+**BTSAVE** est l'entreprise qui conçoit et opère la stratégie. **Turbo Paper Boat (TPB)** est le produit — le token que vous détenez.
+
 ---
 
 ## 2. Le Token TPB (Turbo Paper Boat)
 
-TPB est le token de receipt et de participation du vault (standard ERC-4626). Il représente votre part proportionnelle des actifs du vault (WBTC + valeur de la stratégie).
+TPB est le token de receipt et de participation du vault de BTSAVE (standard ERC-4626). Il représente votre part proportionnelle des actifs du vault (WBTC + valeur de la stratégie).
 
 **Caractéristiques clés** :
 
@@ -95,7 +97,7 @@ Tout est automatisé via keeper + bots, avec alertes Telegram et dashboard.
 
 **CECI N'EST PAS UN CONSEIL FINANCIER, D'INVESTISSEMENT OU FISCAL.**
 
-BTSAVE et le token TPB sont fournis à titre informatif et éducatif uniquement. Aucune personne ou entité liée au projet (développeurs, contributeurs, opérateurs du keeper, communauté) ne vous donne de conseil d'investissement.
+BTSAVE et le token Turbo Paper Boat (TPB) sont fournis à titre informatif et éducatif uniquement. Aucune personne ou entité liée au projet (développeurs, contributeurs, opérateurs du keeper, communauté) ne vous donne de conseil d'investissement.
 
 **Aucune garantie de performance.** Les performances passées (simulateur ou cycles précédents) ne préjugent en rien des résultats futurs. Vous pouvez perdre 100 % de votre apport.
 
@@ -139,7 +141,7 @@ BTSAVE et le token TPB sont fournis à titre informatif et éducatif uniquement.
 
 ---
 
-Vous êtes maintenant pleinement informé. BTSAVE est un outil puissant pour les Bitcoiners convaincus, mais il reste un produit DeFi expérimental à haut risque. **Utilisez uniquement ce que vous pouvez vous permettre de perdre complètement.**
+Vous êtes maintenant pleinement informé. Turbo Paper Boat est un produit puissant pour les Bitcoiners convaincus, mais il reste un produit DeFi expérimental à haut risque. **Utilisez uniquement ce que vous pouvez vous permettre de perdre complètement.**
 
 Bienvenue dans le vault. ⚡
 
