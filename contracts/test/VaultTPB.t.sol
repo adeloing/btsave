@@ -481,6 +481,71 @@ contract VaultTPBTest is Test {
         assertFalse(vault.cycleActive());
     }
 
+    // ===== NFT Eligibility (balance_end >= balance_start) =====
+    function test_NFTEligible_DepositOnly() public {
+        vm.warp(1000);
+        vm.prank(alice);
+        vault.deposit(10_000e6);
+
+        // Alice deposited, balance grew from 0 → eligible
+        assertTrue(vault.isNFTEligible(alice));
+    }
+
+    function test_NFTEligible_AfterTransferOut() public {
+        vm.warp(1000);
+        vm.prank(alice);
+        vault.deposit(10_000e6);
+
+        uint256 bal = vault.balanceOf(alice);
+
+        // Transfer half out → balance decreased
+        vm.prank(alice);
+        vault.transfer(bob, bal / 2);
+
+        assertFalse(vault.isNFTEligible(alice));
+        // Bob received mid-cycle with 0 start → eligible
+        assertTrue(vault.isNFTEligible(bob));
+    }
+
+    function test_NFTEligible_DepositMore() public {
+        vm.warp(1000);
+        vm.prank(alice);
+        vault.deposit(10_000e6);
+
+        // Deposit more → balance increased → still eligible
+        vm.warp(2000);
+        vm.prank(alice);
+        vault.deposit(5_000e6);
+
+        assertTrue(vault.isNFTEligible(alice));
+    }
+
+    function test_NFTEligible_NewCycleResets() public {
+        vm.warp(1000);
+        vm.prank(alice);
+        vault.deposit(10_000e6);
+
+        uint256 bal = vault.balanceOf(alice);
+
+        // Transfer out → ineligible
+        vm.prank(alice);
+        vault.transfer(bob, bal / 2);
+        assertFalse(vault.isNFTEligible(alice));
+
+        // End cycle and start new one
+        oracle.setPrice(int256(ATH));
+        vm.prank(keeper);
+        vault.proposeUnwind();
+        vm.prank(address(safe));
+        vault.executeUnwind();
+        vm.prank(address(safe));
+        vault.startNewCycle(150_000e8);
+
+        // New cycle: Alice's current balance becomes new start → eligible again
+        // (lazy snapshot not yet taken, so start = current)
+        assertTrue(vault.isNFTEligible(alice));
+    }
+
     // ===== Entry Fee View =====
     function test_GetEntryFeeBps() public {
         oracle.setPrice(100_000e8); // Well below ATH-3%
