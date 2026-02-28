@@ -120,7 +120,7 @@ contract LimitedSignerModule {
     event KillSwitchActivated(address indexed owner);
     event KillSwitchDeactivated(address indexed owner);
     event BotRotated(address indexed oldBot, address indexed newBot);
-    event RuleViolation(bytes32 indexed txHash, string rule, string details);
+    event RuleViolation(bytes32 indexed txHash, uint8 ruleNumber, string rule, string details);
     event DailyLimitReset(uint256 timestamp);
 
     // ============================================================
@@ -167,7 +167,13 @@ contract LimitedSignerModule {
     // ============================================================
 
     /**
-     * @notice Keeper proposes a transaction. Basic checks done here.
+     * @notice Keeper proposes a transaction. Checks applied at proposal time:
+     *   R1  — Proposant must be whitelisted keeper (onlyKeeper modifier)
+     *   R2  — Target address must be whitelisted
+     *   R3  — Function selector must be whitelisted for target
+     *   R4  — Module must not be killed (notKilled modifier)
+     *   R6  — No raw ETH transfers (value must be 0)
+     *   R9  — Target code hash must match pinned hash (1inch, Aave Pool, Oracle)
      */
     function proposeTransaction(
         address to,
@@ -226,7 +232,23 @@ contract LimitedSignerModule {
     }
 
     /**
-     * @notice Execute after threshold approvals. Re-checks ALL rules on-chain.
+     * @notice Execute after threshold approvals. Re-checks ALL rules on-chain:
+     *   R4  — Module not killed (notKilled modifier)
+     *   R5  — Gas price ≤ maxGasPrice (80 gwei default)
+     *   R7  — No transfer/transferFrom to non-whitelisted address
+     *   R8  — Bot approval count ≥ botThreshold (2/3)
+     *   R10 — Cooldown between executions of same selector (300s default)
+     *   R12 — Daily transaction count < maxDailyTx (20 default)
+     *   R14 — Health Factor ≥ 1.72 (checked PRE and POST execution, atomic revert)
+     *
+     *   Off-chain validators (called by bots before approving):
+     *   R11 — Daily borrow volume ≤ maxDailyBorrowVolume (validateBorrow)
+     *   R13 — Borrow amount ≤ borrowPerStepBase × 1.25 (validateBorrow)
+     *   R15 — No borrow if price volatility > 4% in 10min (bot-side oracle check)
+     *   R16 — 1inch slippage ≤ 0.35% (bot-side simulation)
+     *   R17 — Options only if extra WBTC ≥ threshold (bot-side balance check)
+     *   R18 — Rebalance amount ≤ 2% of total position (bot-side check)
+     *   R19 — Borrow amount ≤ 4% of TVL (validateBorrow)
      */
     function executeIfReady(bytes32 txHash) external notKilled {
         Proposal storage p = proposals[txHash];
@@ -322,8 +344,11 @@ contract LimitedSignerModule {
     // ============================================================
 
     /**
-     * @notice Call before borrow operations to validate amount limits.
-     *         Bots should call isAllowedBorrow() off-chain before approving.
+     * @notice Off-chain validator for borrow operations. Checks:
+     *   R13 — Borrow amount ≤ borrowPerStepBase × 1.25
+     *   R19 — Borrow amount ≤ 4% of current TVL (totalCollateral)
+     *   R14 — Current Health Factor ≥ minHealthFactor (1.72)
+     *   R11 — Daily borrow volume within limit
      */
     function validateBorrow(uint256 amount) external view returns (bool, string memory) {
         // R13: amount <= step * 1.25
@@ -351,7 +376,9 @@ contract LimitedSignerModule {
     }
 
     /**
-     * @notice Validate swap slippage (off-chain check helper).
+     * @notice Off-chain validator for swap operations.
+     *   R16 — Slippage check is bot-side (simulation vs oracle)
+     *   R11 — Daily swap volume within limit
      */
     function validateSwap(uint256 amount) external view returns (bool, string memory) {
         if (dailySwapVolume + amount > maxDailySwapVolume) {
