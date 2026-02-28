@@ -1,0 +1,69 @@
+groups:
+  - name: lsm-alerts
+    rules:
+      # Bot down — no heartbeat for 30s
+      - alert: BotDown
+        expr: time() - lsm_bot_last_heartbeat > 30
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Bot {{ $labels.bot }} is down"
+          description: "No heartbeat from bot {{ $labels.bot }} for {{ $value }}s"
+
+      # HF Warning
+      - alert: HFWarning
+        expr: aave_health_factor < 1.80 and aave_health_factor >= 1.72
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Health Factor warning: {{ $value }}"
+          description: "HF approaching minimum threshold (1.72)"
+
+      # HF Critical
+      - alert: HFCritical
+        expr: aave_health_factor < 1.72
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "🚨 Health Factor CRITICAL: {{ $value }}"
+          description: "HF below minimum! Module should block all borrows."
+
+      # Kill switch activated
+      - alert: KillSwitchActivated
+        expr: lsm_kill_switch_active == 1
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "⚠️ Kill Switch ACTIVATED"
+          description: "All bot operations halted. Human intervention required."
+
+      # Bot latency high
+      - alert: BotLatencyHigh
+        expr: histogram_quantile(0.95, lsm_bot_approval_latency_seconds_bucket) > 15
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Bot {{ $labels.bot }} approval latency > 15s"
+
+      # Rejection spike
+      - alert: RejectionSpike
+        expr: increase(lsm_tx_rejected_total[10m]) > 5
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rejection spike: {{ $value }} rejections in 10min"
+
+      # Daily limit approaching
+      - alert: DailyLimitApproaching
+        expr: lsm_daily_borrow_volume_usdc / 62400 > 0.8
+        for: 0s
+        labels:
+          severity: info
+        annotations:
+          summary: "Daily borrow volume at {{ $value | humanizePercentage }}"
