@@ -101,7 +101,19 @@
     margin-top: 10px;
     text-shadow: 0 2px 12px rgba(0,0,0,0.8);
     line-height: 1.4;
+    min-height: 28px;
   }
+  .tw-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    background: #e8e8e8;
+    margin-left: 1px;
+    vertical-align: text-bottom;
+    animation: twBlink 0.7s infinite;
+  }
+  .tw-orange { color: #f0a020; }
+  @keyframes twBlink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
 
   /* Green dollar tint on the bottom half (storm image only) */
   .hero-wrap.storm::after {
@@ -186,7 +198,7 @@
     <img id="heroImg" src="tpb-step0-dock.jpg" alt="Turbo Paper Boat — orange paper boat docked at a sunny pier">
     <div class="hero-overlay">
       <h1 class="hero-title">TURBO<br>PAPER BOAT</h1>
-      <p class="hero-subtitle">Bitcoin Yield. Protected.<br>Rewarded.</p>
+      <p class="hero-subtitle" id="typewriter"><span class="tw-cursor"></span></p>
     </div>
   </div>
 
@@ -244,6 +256,42 @@ document.addEventListener('DOMContentLoaded', () => {
   const step = parseInt(document.getElementById('currentStep').textContent) || 0;
   updateHero(step);
 });
+
+// Typewriter: "Come aboard the hype train" → delete "train" → type "boat" in orange
+(function() {
+  const el = document.getElementById('typewriter');
+  if (!el) return;
+  const full = 'Come aboard the hype train';
+  const delWord = 'train';
+  const newWord = 'boat';
+  const cur = '<span class="tw-cursor"></span>';
+  const spd = 70, delSpd = 90, pauseType = 1200, pauseDel = 400, pauseEnd = 5000;
+
+  function typeText(t, i, cb) {
+    if (i > t.length) return setTimeout(cb, pauseType);
+    el.innerHTML = t.slice(0, i) + cur;
+    setTimeout(() => typeText(t, i + 1, cb), spd);
+  }
+  function delText(t, end, stop, cb) {
+    if (end <= stop) return setTimeout(cb, pauseDel);
+    el.innerHTML = t.slice(0, end - 1) + cur;
+    setTimeout(() => delText(t, end - 1, stop, cb), delSpd);
+  }
+  function typeNew(base, word, i, cb) {
+    if (i > word.length) return setTimeout(cb, pauseEnd);
+    el.innerHTML = base + '<span class="tw-orange">' + word.slice(0, i) + '</span>' + cur;
+    setTimeout(() => typeNew(base, word, i + 1, cb), spd);
+  }
+  function run() {
+    typeText(full, 0, () => {
+      const base = full.slice(0, full.length - delWord.length);
+      delText(full, full.length, base.length, () => {
+        typeNew(base, newWord, 0, run);
+      });
+    });
+  }
+  run();
+})();
 
 async function connectWallet() {
   const btn = document.getElementById('connectBtn');
