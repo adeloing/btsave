@@ -57,6 +57,8 @@
     box-shadow: 0 4px 20px rgba(46,139,58,0.5);
     background: linear-gradient(135deg, #3a9e48 0%, #228832 100%);
   }
+  a.connect-btn { text-decoration: none; }
+  a.connect-btn:hover { transform: translateY(-1px); }
   .connect-btn svg { width: 14px; height: 14px; }
 
   /* Hero image with green-dollar tint overlay */
@@ -185,14 +187,16 @@
 <body>
 
 <div class="card">
-  <!-- Connect Wallet -->
+  <!-- Nav buttons -->
+  <a href="/tpb/project.html" class="connect-btn" style="left:14px;right:auto">Project</a>
+  <a href="/tpb/mint.html" class="connect-btn" style="left:50%;right:auto;transform:translateX(-50%)">Mint</a>
   <button class="connect-btn" id="connectBtn" onclick="connectWallet()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <rect x="2" y="6" width="20" height="14" rx="2"/>
       <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
       <path d="M2 10h20"/>
     </svg>
-    <span id="btnText">Connect Wallet</span>
+    <span id="btnText">Connect</span>
   </button>
 
   <!-- Hero illustration — switches based on current step -->
