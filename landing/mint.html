@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mint TPB — Turbo Paper Boat</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+  }
+  .card {
+    width: 420px;
+    max-width: 95vw;
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid rgba(255,165,0,0.25);
+    box-shadow: 0 0 60px rgba(255,140,0,0.12), 0 0 120px rgba(0,0,0,0.8);
+    background: #111;
+  }
+
+  /* Captain image — not full bleed */
+  .captain-wrap {
+    padding: 20px 20px 0;
+  }
+  .captain-img {
+    width: 100%;
+    border-radius: 14px;
+    display: block;
+    border: 1px solid rgba(255,165,0,0.15);
+  }
+
+  .content { padding: 20px 20px 28px; }
+
+  .back {
+    display: inline-block;
+    color: rgba(255,255,255,0.5);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    transition: color 0.2s;
+  }
+  .back:hover { color: #f0a020; }
+
+  h1 {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 22px;
+    color: #f0a020;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-size: 13px;
+    color: rgba(255,255,255,0.45);
+    margin-bottom: 20px;
+  }
+
+  /* Info row */
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .info-box {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,165,0,0.08);
+    border-radius: 10px;
+    padding: 12px 8px;
+    text-align: center;
+  }
+  .info-val {
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    font-size: 15px;
+    color: #f0a020;
+  }
+  .info-val.green { color: #3aae4a; }
+  .info-label {
+    font-size: 9px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.4);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-top: 4px;
+  }
+
+  /* Mint form */
+  .mint-form {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,165,0,0.1);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .form-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 8px;
+  }
+  .input-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .input-wrap {
+    flex: 1;
+    position: relative;
+  }
+  .input-wrap input {
+    width: 100%;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,165,0,0.15);
+    border-radius: 10px;
+    padding: 12px 60px 12px 14px;
+    color: #fff;
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    font-size: 18px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input-wrap input:focus { border-color: rgba(255,165,0,0.4); }
+  .input-wrap .unit {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.3);
+  }
+  .max-btn {
+    background: rgba(240,160,32,0.15);
+    border: 1px solid rgba(240,160,32,0.3);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #f0a020;
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .max-btn:hover { background: rgba(240,160,32,0.25); }
+
+  .estimate {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-top: 1px solid rgba(255,255,255,0.06);
+  }
+  .estimate .label { font-size: 12px; color: rgba(255,255,255,0.4); }
+  .estimate .value {
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    font-size: 15px;
+    color: #3aae4a;
+  }
+
+  /* Fee warning */
+  .fee-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(240,160,32,0.08);
+    border: 1px solid rgba(240,160,32,0.15);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: rgba(255,255,255,0.55);
+  }
+  .fee-note .icon { font-size: 16px; }
+  .fee-note strong { color: #f0a020; }
+
+  /* Mint button */
+  .mint-btn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #f0a020 0%, #d4851a 100%);
+    color: #fff;
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 16px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 20px rgba(240,160,32,0.3);
+  }
+  .mint-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 28px rgba(240,160,32,0.45);
+  }
+  .mint-btn:active { transform: translateY(0); }
+
+  /* Cycle lock notice */
+  .lock-notice {
+    text-align: center;
+    margin-top: 14px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+  }
+  .lock-notice span { color: #3aae4a; }
+
+  @media (max-width: 440px) {
+    .card { border-radius: 12px; }
+    .captain-wrap { padding: 14px 14px 0; }
+    .content { padding: 16px 14px 22px; }
+    .info-val { font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="captain-wrap">
+    <img src="tpb-captain.jpg" alt="The Captain — Follow the captain" class="captain-img">
+  </div>
+
+  <div class="content">
+    <a href="/tpb/" class="back">← Back to TPB</a>
+
+    <h1>⚓ Mint TPB</h1>
+    <p class="subtitle">Deposit WBTC, receive TPB tokens at NAV price</p>
+
+    <!-- Key info -->
+    <div class="info-grid">
+      <div class="info-box">
+        <div class="info-val">$38.78</div>
+        <div class="info-label">NAV / TPB</div>
+      </div>
+      <div class="info-box">
+        <div class="info-val green">Step 0</div>
+        <div class="info-label">Current Step</div>
+      </div>
+      <div class="info-box">
+        <div class="info-val">0%</div>
+        <div class="info-label">Entry Fee</div>
+      </div>
+    </div>
+
+    <!-- Mint form -->
+    <div class="mint-form">
+      <div class="form-label">You deposit</div>
+      <div class="input-row">
+        <div class="input-wrap">
+          <input type="number" id="wbtcInput" placeholder="0.00" step="0.001" min="0" oninput="updateEstimate()">
+          <span class="unit">WBTC</span>
+        </div>
+        <button class="max-btn" onclick="setMax()">MAX</button>
+      </div>
+
+      <div class="estimate">
+        <span class="label">You receive (est.)</span>
+        <span class="value" id="tpbEstimate">— TPB</span>
+      </div>
+    </div>
+
+    <!-- Fee warning (shows when step > 0) -->
+    <div class="fee-note" id="feeNote" style="display:none;">
+      <span class="icon">⚠️</span>
+      <span>Entry fee: <strong id="feePercent">2%</strong> — minting near ATH incurs a fee to protect existing holders</span>
+    </div>
+
+    <!-- Mint button -->
+    <button class="mint-btn" onclick="fakeMint()">MINT TPB ⚡</button>
+
+    <div class="lock-notice">
+      🔒 TPB is locked during active cycles · Redeem at <span>Step 0</span> only
+    </div>
+  </div>
+</div>
+
+<script>
+const NAV = 38.78;
+const WBTC_BALANCE = 0.85; // fake balance
+
+function updateEstimate() {
+  const input = document.getElementById('wbtcInput');
+  const est = document.getElementById('tpbEstimate');
+  const val = parseFloat(input.value);
+  if (!val || val <= 0) {
+    est.textContent = '— TPB';
+    return;
+  }
+  // WBTC price ~$97,000 for demo
+  const wbtcUsd = val * 97000;
+  const tpb = wbtcUsd / NAV;
+  est.textContent = tpb.toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' TPB';
+}
+
+function setMax() {
+  document.getElementById('wbtcInput').value = WBTC_BALANCE;
+  updateEstimate();
+}
+
+function fakeMint() {
+  const btn = document.querySelector('.mint-btn');
+  const input = document.getElementById('wbtcInput');
+  const val = parseFloat(input.value);
+  if (!val || val <= 0) {
+    btn.textContent = 'ENTER AMOUNT';
+    setTimeout(() => btn.textContent = 'MINT TPB ⚡', 1500);
+    return;
+  }
+  btn.textContent = 'MINTING…';
+  btn.style.background = 'linear-gradient(135deg, #3aae4a 0%, #1a8a2e 100%)';
+  setTimeout(() => {
+    const wbtcUsd = val * 97000;
+    const tpb = (wbtcUsd / NAV).toLocaleString('en-US', { maximumFractionDigits: 1 });
+    btn.textContent = '✓ ' + tpb + ' TPB MINTED';
+    setTimeout(() => {
+      btn.textContent = 'MINT TPB ⚡';
+      btn.style.background = 'linear-gradient(135deg, #f0a020 0%, #d4851a 100%)';
+      input.value = '';
+      document.getElementById('tpbEstimate').textContent = '— TPB';
+    }, 3000);
+  }, 1200);
+}
+</script>
+
+</body>
+</html>
