@@ -250,10 +250,20 @@ function updateHero(step) {
   }
 }
 
-// Initialize from displayed step value
+// Pick calm or storm once per visit
 document.addEventListener('DOMContentLoaded', () => {
-  const step = parseInt(document.getElementById('currentStep').textContent) || 0;
-  updateHero(step);
+  const wrap = document.querySelector('.hero-wrap');
+  const img = document.getElementById('heroImg');
+  if (Math.random() < 0.5) {
+    img.src = 'tpb-storm-clean.jpg';
+    wrap.classList.add('storm');
+    const totalSteps = Math.floor(Math.random() * 26) + 5;
+    const currentStep = Math.floor(Math.random() * (totalSteps - 1)) + 1;
+    document.getElementById('currentStep').textContent = currentStep;
+    document.getElementById('totalSteps').textContent = totalSteps;
+    document.getElementById('currentStep').style.color = '#3aae4a';
+    document.getElementById('totalSteps').style.color = '#3aae4a';
+  }
 });
 
 // Typewriter: alternates between two phrases, both replace "train" → "boat" in orange
@@ -291,28 +301,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function run() {
     const full = phrases[idx];
     idx = (idx + 1) % phrases.length;
-    // Randomly switch hero image ~50% of the time
-    const wrap = document.querySelector('.hero-wrap');
-    const img = document.getElementById('heroImg');
-    const isStorm = Math.random() < 0.5;
-    if (isStorm) {
-      img.src = 'tpb-storm-clean.jpg';
-      wrap.classList.add('storm');
-      // Show active metrics in storm mode
-      const totalSteps = Math.floor(Math.random() * 26) + 5; // 5-30
-      const currentStep = Math.floor(Math.random() * (totalSteps - 1)) + 1; // 1 to totalSteps-1
-      document.getElementById('currentStep').textContent = currentStep;
-      document.getElementById('totalSteps').textContent = totalSteps;
-      document.getElementById('currentStep').style.color = '#f0a020';
-      document.getElementById('totalSteps').style.color = '#f0a020';
-    } else {
-      img.src = 'tpb-step0-dock.jpg';
-      wrap.classList.remove('storm');
-      document.getElementById('currentStep').textContent = '0';
-      document.getElementById('totalSteps').textContent = '0';
-      document.getElementById('currentStep').style.color = '#3aae4a';
-      document.getElementById('totalSteps').style.color = '#3aae4a';
-    }
     typeText(full, 0, () => {
       const base = full.slice(0, full.length - delWord.length);
       delText(full, full.length, base.length, () => {
