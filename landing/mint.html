@@ -18,6 +18,7 @@
     padding: 20px;
   }
   .card {
+    position: relative;
     width: 420px;
     max-width: 95vw;
     border-radius: 18px;
@@ -25,6 +26,13 @@
     border: 1px solid rgba(255,165,0,0.25);
     box-shadow: 0 0 60px rgba(255,140,0,0.12), 0 0 120px rgba(0,0,0,0.8);
     background: #111;
+  }
+  .card-bg {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: url('tpb-lifebuoy.jpg') center 60%/cover no-repeat;
+    opacity: 0.35;
+    pointer-events: none;
   }
 
   /* Captain image — not full bleed */
@@ -38,7 +46,8 @@
     border: 1px solid rgba(255,165,0,0.15);
   }
 
-  .content { padding: 20px 20px 28px; }
+  .content { position: relative; z-index: 1; padding: 20px 20px 28px; }
+  .captain-wrap { position: relative; z-index: 1; }
 
   .back {
     display: inline-block;
@@ -229,6 +238,7 @@
 <body>
 
 <div class="card">
+  <div class="card-bg"></div>
   <div class="captain-wrap">
     <img src="tpb-captain.jpg" alt="The Captain — Follow the captain" class="captain-img">
   </div>
