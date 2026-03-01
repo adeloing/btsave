@@ -331,11 +331,15 @@ async function connectWallet() {
     txt.textContent = 'Connecting…';
     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
     const addr = accounts[0];
-    txt.textContent = addr.slice(0, 6) + '…' + addr.slice(-4);
-    btn.style.background = 'linear-gradient(135deg, #1a7a2e 0%, #0d5a1a 100%)';
-    btn.style.boxShadow = '0 2px 12px rgba(26,122,46,0.4)';
+    // Transform into "My Journey" orange link
+    const link = document.createElement('a');
+    link.href = '/tpb/journey.html?addr=' + addr;
+    link.className = 'connect-btn';
+    link.style.cssText = 'background:linear-gradient(135deg,#f0a020 0%,#d4851a 100%);box-shadow:0 2px 12px rgba(240,160,32,0.4);right:14px;';
+    link.innerHTML = '<span>⚡ My Journey</span>';
+    btn.replaceWith(link);
   } catch (e) {
-    txt.textContent = 'Connect Wallet';
+    txt.textContent = 'Connect';
   }
 }
 </script>

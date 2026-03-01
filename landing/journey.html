@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Journey — Turbo Paper Boat</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+  }
+  .card {
+    width: 420px;
+    max-width: 95vw;
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid rgba(255,165,0,0.25);
+    box-shadow: 0 0 60px rgba(255,140,0,0.12), 0 0 120px rgba(0,0,0,0.8);
+    background: #111;
+    padding: 32px 24px;
+  }
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(255,255,255,0.5);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 24px;
+    transition: color 0.2s;
+  }
+  .back:hover { color: #f0a020; }
+  h1 {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 22px;
+    color: #f0a020;
+    margin-bottom: 6px;
+  }
+  .addr {
+    font-size: 13px;
+    color: rgba(255,255,255,0.4);
+    font-family: monospace;
+    margin-bottom: 28px;
+    word-break: break-all;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .stat {
+    background: rgba(255,255,255,0.04);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    border: 1px solid rgba(255,165,0,0.08);
+  }
+  .stat-value {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 22px;
+    color: #f0a020;
+  }
+  .stat-value.green { color: #3aae4a; }
+  .stat-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.45);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-top: 6px;
+  }
+  .nft-section { margin-bottom: 24px; }
+  .nft-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: rgba(255,255,255,0.6);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+  .nft-empty {
+    text-align: center;
+    padding: 20px;
+    color: rgba(255,255,255,0.25);
+    font-size: 13px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 10px;
+    border: 1px dashed rgba(255,255,255,0.08);
+  }
+  .nft-list { display: flex; gap: 10px; flex-wrap: wrap; }
+  .nft-badge {
+    background: rgba(240,160,32,0.1);
+    border: 1px solid rgba(240,160,32,0.25);
+    border-radius: 10px;
+    padding: 10px 14px;
+    text-align: center;
+    min-width: 80px;
+  }
+  .nft-badge .tier { font-weight: 700; font-size: 14px; color: #f0a020; }
+  .nft-badge .bonus { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 2px; }
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: rgba(255,255,255,0.3);
+  }
+  .loading .spinner {
+    width: 32px; height: 32px;
+    border: 3px solid rgba(240,160,32,0.2);
+    border-top-color: #f0a020;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <a href="/tpb/" class="back">← Back to TPB</a>
+  <h1>⚡ My Journey</h1>
+  <div class="addr" id="addr">—</div>
+
+  <div id="content">
+    <div class="loading">
+      <div class="spinner"></div>
+      Connecting to chain…
+    </div>
+  </div>
+</div>
+
+<script>
+const addr = new URLSearchParams(location.search).get('addr');
+const addrEl = document.getElementById('addr');
+const content = document.getElementById('content');
+
+if (!addr) {
+  addrEl.textContent = 'No wallet connected';
+  content.innerHTML = '<p style="text-align:center;color:rgba(255,255,255,0.3)">Connect your wallet on the <a href="/tpb/" style="color:#f0a020">main page</a> first.</p>';
+} else {
+  addrEl.textContent = addr;
+  // Placeholder stats — will be wired to on-chain data
+  setTimeout(() => {
+    content.innerHTML = `
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-value">0</div>
+          <div class="stat-label">TPB Balance</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value green">0</div>
+          <div class="stat-label">Cycles Held</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">0%</div>
+          <div class="stat-label">Auto-Redeem</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value green">—</div>
+          <div class="stat-label">Pending WBTC</div>
+        </div>
+      </div>
+      <div class="nft-section">
+        <div class="nft-title">🏆 NFT Bonuses</div>
+        <div class="nft-empty">No NFTs yet — hold TPB through cycles to earn rewards</div>
+      </div>
+    `;
+  }, 800);
+}
+</script>
+
+</body>
+</html>
