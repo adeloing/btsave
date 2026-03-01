@@ -257,15 +257,19 @@ document.addEventListener('DOMContentLoaded', () => {
   updateHero(step);
 });
 
-// Typewriter: "Come aboard the hype train" → delete "train" → type "boat" in orange
+// Typewriter: alternates between two phrases, both replace "train" → "boat" in orange
 (function() {
   const el = document.getElementById('typewriter');
   if (!el) return;
-  const full = 'Come aboard the hype train';
+  const phrases = [
+    'Come aboard the hype train',
+    'Nothing stops this train'
+  ];
   const delWord = 'train';
   const newWord = 'boat';
   const cur = '<span class="tw-cursor"></span>';
   const spd = 70, delSpd = 90, pauseType = 1200, pauseDel = 400, pauseEnd = 5000;
+  let idx = 0;
 
   function typeText(t, i, cb) {
     if (i > t.length) return setTimeout(cb, pauseType);
@@ -283,6 +287,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => typeNew(base, word, i + 1, cb), spd);
   }
   function run() {
+    const full = phrases[idx];
+    idx = (idx + 1) % phrases.length;
     typeText(full, 0, () => {
       const base = full.slice(0, full.length - delWord.length);
       delText(full, full.length, base.length, () => {
