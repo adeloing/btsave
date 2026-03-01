@@ -58,144 +58,93 @@ Version finale de la stratégie verrouillée le 18 février 2026. Contrats mis �
 | **Décimales** | 8 (aligné sur les satoshis) ou 18 (standard – à confirmer en mainnet) |
 | **Supply** | Dynamique et illimitée (mint au dépôt + rewards performance) |
 
-**Fonctionnalités** :
+**Minting** :
 
-- Représente une quote-part pro-rata des actifs du vault (`totalAssets = WBTC liquide + safeWBTC`)
-- Mintable uniquement par dépôt de WBTC dans le vault (aucun pre-mine, aucune allocation team)
-- Redeemable contre du WBTC à tout moment (au prorata de la NAV)
-- Transferable librement (ERC-20 standard)
-- Bonus de performance mintés automatiquement en fin de cycle (nouvel ATH) au prorata des holdings
-- Multiplicateur NFT optionnel (collection ERC-1155, 4 tiers)
+- **Premier dépôt** : 1 WBTC = 1e8 TPB (1:1)
+- **Dépôts suivants** : `shares = (wbtcAmount × totalSupply) / totalAssets` (NAV-based → anti-dilution totale)
 
-**Droits conférés** :
+**Redeem** : Burn TPB → WBTC équivalent (swap automatique via DeFiLlama si nécessaire)
 
-- Droit à une quote-part des actifs du vault (WBTC)
-- Droit de redemption (burn TPB → recevoir WBTC)
-- Droit de transfert libre
-- Aucun droit de gouvernance
-- Aucun droit de vote
-- Aucun dividende (les gains sont reflétés dans la NAV du token)
+**Transferable** : 100 % libre dès le mint (pas de lock, pas de soulbound)
 
-**Mécanisme de prix** :
+**Events** : `Deposited`, `Redeemed`, `CycleReset`
 
-```
-sharePrice = totalAssets / totalSupply
-```
-
-Le prix du TPB évolue avec la performance de la stratégie. En cas de gains, chaque TPB représente plus de WBTC. En cas de pertes, chaque TPB représente moins de WBTC.
-
-Sur le marché secondaire (DEX), le TPB peut trader au-dessus ou en-dessous de sa NAV selon l'offre et la demande.
+TPB n'est pas un security, un ART (Asset-Referenced Token), un EMT ou un token de paiement. C'est un token utilitaire de participation à un vault DeFi open-source.
 
 ---
 
-## 4. Technologie et Blockchain (MiCA Art. 6(4))
+## 4. Stratégie Technique et Mécanismes (Détails Opérationnels)
 
-**Blockchain** : Ethereum L1 (mainnet)
+**Allocation initiale post-reset** : 79 % aEthWBTC + 18 % buffer aEthUSDC + 3 % marge Deribit.
 
-**Protocoles utilisés** :
+**Mécanisme de cycle** (verrouillé 18/02/2026) :
 
-| Protocole | Rôle | Risque spécifique |
-|-----------|------|-------------------|
-| AAVE V3 | Lending/borrowing (collateral + buffer) | Smart contract risk, oracle risk |
-| Deribit | Shorts PERP + Puts OTM (CeFi) | Risque de contrepartie, KYC |
-| DeFiLlama / 1inch | Agrégateur de swaps | Slippage, MEV |
-| Gnosis Safe | Multisig 2/2 pour exécution | Risque de clé privée |
+- Cycle commence et se termine uniquement sur nouvel ATH BTC ratcheté.
+- À chaque palier −5 % depuis l'ATH : borrow USDC → swap DeFiLlama → aEthWBTC + short BTC-PERP Deribit.
+- Protection : puts OTM dynamiques financés par le carry contango (déclenchements à +6 %, +14 %, +24 % WBTC extra).
 
-**Smart Contracts** :
+**Reset ATH** :
 
-| Contrat | Description | Tests |
-|---------|-------------|-------|
-| `VaultTPB.sol` | Vault + ERC-20 TPB token | 36/36 ✅ |
-| `LimitedSignerModule.sol` | Module Gnosis Safe (19 règles on-chain) | 30/30 ✅ |
-| `NFTBonus.sol` | ERC-1155 NFT bonus system | Inclus dans VaultTPB tests |
+1. Clôture tous les shorts → profits = bonus pur
+2. Vente du minimum WBTC (P2) pour rembourser 100 % dette USDC
+3. Conservation de tout le reste = gain net permanent
+4. Rebalance 79/18/3 → nouveau cycle
 
-**Sécurité on-chain (LimitedSignerModule v3)** :
+**Gestion du risque** : tout est piloté par le Health Factor AAVE (zones HF 1.50 / 1.40 / 1.30 / 1.15) et non par le prix seul. Exécution manuelle assistée par bots + Telegram alerts (<1h sur L1).
 
-- 19 règles de validation automatiques
-- Consensus multi-bot (2/3 minimum)
-- Kill switch (2/2 humains uniquement)
-- Health Factor minimum : 1.55
-- Plafond gas : 80 gwei (auto-reset)
-- Volume daily caps (borrow + swap)
-- Whitelisting targets + selectors
-- Code hash pinning
-- Proposal TTL 30 min (auto-expire)
-
-**Audit** : Tests intensifs sur Sepolia (66/66 tests passés). Audit professionnel planifié avant déploiement mainnet.
+**Keeper** : met à jour `safeWBTC` à chaque gain (performance + bonus Deribit).
 
 ---
 
-## 5. Facteurs de Risque (MiCA Art. 6(5))
+## 5. Fonctionnement Technique des Smart Contracts
 
-### Risques liés au token
+- **VaultTPB v2 (ERC-4626)** : `depositWBTC`, `redeem`, `previewRedeem`, `notifyCycleEnd`.
+- **TPB.sol** : mint/burn restreints au Vault, transferts libres.
+- **Intégrations** : AAVE V3 Pool, DeFiLlama Aggregator, Deribit API (off-chain keeper).
+- **Tests** : 36/36 passés sur Sepolia, dont test anti-dilution Alice (early) vs Bob (late).
+- **Audit** : audit professionnel en cours – sera publié avant mainnet.
 
-- **Perte totale possible** : un bug de smart contract, un hack, un événement extrême ou une erreur humaine peut entraîner la perte partielle ou totale de votre apport.
-- **Volatilité extrême** : le Bitcoin peut chuter de plus de 50 % rapidement. La valeur de vos TPB peut baisser fortement en cours de cycle.
-- **Pas de garantie de capital** : aucun rendement minimum, aucun capital garanti, aucune assurance.
-- **Risque de liquidité** : en cas de rush de redemption massif, le vault peut temporairement manquer de WBTC liquide.
-- **Risque de marché secondaire** : le TPB peut trader significativement en-dessous de sa NAV sur les DEX.
-
-### Risques liés à la technologie
-
-- **Smart contract risk** : malgré 66 tests passés, aucun code n'est exempt de bugs. Un audit professionnel est planifié mais pas encore réalisé.
-- **Risque oracle** : une manipulation du prix WBTC/USD sur l'oracle Chainlink pourrait affecter le Health Factor et déclencher des actions non désirées.
-- **Risque de clé privée** : compromission des clés du multisig Gnosis Safe (2/2).
-- **Risque de dépendance** : le protocole dépend d'AAVE V3, Deribit, Ethereum L1 et Chainlink. Une défaillance de l'un de ces protocoles impacte directement le vault.
-- **Risque MEV** : les transactions de swap peuvent être frontrun ou sandwichées sur Ethereum L1.
-
-### Risques liés au projet
-
-- **Risque d'équipe** : projet pseudonyme, pas d'entité juridique, pas de recours légal en cas de perte.
-- **Risque réglementaire** : les produits dérivés, le lending et les vaults DeFi peuvent être soumis à des réglementations changeantes (KYC, taxes, interdictions locales).
-- **Risque opérationnel** : les keepers et bots doivent fonctionner 24/7. Une panne prolongée pourrait retarder des opérations critiques.
-- **Risque de centralisation partielle** : Deribit est un exchange centralisé soumis au risque de contrepartie, gel de fonds, KYC rétroactif.
-
-### Risques spécifiques à la stratégie
-
-- **Risque de contango inversé** : si le funding rate BTC-PERP devient durablement négatif, les shorts deviennent coûteux au lieu de générer du carry.
-- **Risque de corrélation** : en cas de crise systémique crypto, tous les actifs (WBTC, USDC, AAVE) peuvent être impactés simultanément.
-- **Risque de depeg WBTC** : si WBTC perd sa parité avec BTC, le collateral AAVE perd de la valeur.
-- **Risque de depeg USDC** : si USDC perd sa parité avec USD, le buffer et les emprunts sont affectés.
+Code source complet et auditable : https://github.com/adeloing/btsave/tree/main/contracts
 
 ---
 
-## 6. Informations sur l'Offre au Public (MiCA Art. 6(6))
+## 6. Facteurs de Risque (MiCA Art. 6(4) – Exhaustif)
 
-**Type d'offre** : Aucune offre au public au sens traditionnel. Le protocole est open-source et permissionless. Tout utilisateur peut interagir avec les smart contracts directement.
+**Risques de perte totale ou partielle** :
 
-**Prix d'émission** : Pas de prix fixe. Le prix du TPB est déterminé par la NAV du vault au moment du dépôt.
+- Bug smart contract ou hack de protocole (AAVE, Deribit, oracle)
+- Contrepartie Deribit (exchange risk)
+- Événement extrême Bitcoin (>50 % chute en peu de temps)
+- Risque d'exécution (retard keeper, gas spike, slippage)
+- Risque de liquidité du vault en cas de rush redeem massif
+- Risque réglementaire : évolution MiCA, interdictions locales, taxes
+- Risque technique Ethereum (reorg, congestion)
+- Risque opérationnel (erreur humaine du keeper)
+- **Aucun capital garanti – aucune assurance**
 
-**Frais** :
-- Frais de dépôt : 0 % (seul le gas Ethereum s'applique)
-- Frais de redemption : 0 % (seul le gas s'applique)
-- Frais de gestion : 0,5-1 % annualisé (à confirmer — couvre gas + keeper + monitoring)
-- Frais de performance : à définir
+**Risque de dilution** : nul grâce au minting NAV-based.
 
-**Allocation initiale** :
-- Pre-mine : **0 TPB** (aucun)
-- Allocation team : **0 TPB** (aucune)
-- Allocation investisseurs : **0 TPB** (aucune)
-- 100 % des TPB sont mintés uniquement par dépôt de WBTC par les utilisateurs
+**Risque de performance** : aucune garantie de rendement ; les performances passées (simulateur) ne préjugent pas des résultats futurs.
 
-**Période d'offre** : Indéfinie (le vault accepte les dépôts en continu).
+**Risques spécifiques au token** :
 
-**Blockchain de déploiement** : Ethereum L1 (mainnet). Testnet Sepolia pour la phase de test actuelle.
+- Volatilité du prix TPB sur marchés secondaires
+- Perte d'accès wallet
+- Rug-pull inexistant (open-source, pas de clé admin centralisée après déploiement)
 
 ---
 
-## 7. Gouvernance et Droits (MiCA Art. 6(7))
+## 7. Aspects Légaux et Réglementaires (MiCA Compliance)
 
-**Gouvernance** : Aucune gouvernance on-chain. Les décisions stratégiques sont prises par les opérateurs du vault (multisig 2/2 Gnosis Safe).
+**Classification** : TPB est un crypto-asset utilitaire au sens MiCA (non ART, non EMT, non security). Le projet ne constitue pas une offre au public au sens strict nécessitant approbation CASP ou autorité nationale (offre décentralisée open-source).
 
-**Droits des holders TPB** :
-- ✅ Droit de redemption (burn → WBTC)
-- ✅ Droit de transfert libre
-- ✅ Droit de consulter la NAV en temps réel (`previewRedeem()`)
-- ❌ Pas de droit de vote
-- ❌ Pas de droit de gouvernance
-- ❌ Pas de dividende
+**Responsabilité** : Le projet décline toute responsabilité pour pertes directes, indirectes ou consécutives. L'utilisateur est seul responsable de sa due diligence et de sa conformité fiscale/juridique dans sa juridiction.
 
-**Modification du protocole** : Le projet se réserve le droit de faire évoluer la stratégie, les paramètres ou le code, dans la mesure où cela reste conforme à l'esprit zéro-liquidation et accumulation BTC. Les modifications sont publiques (commits GitHub) et notifiées via Telegram.
+**Taxes** : L'utilisateur doit déclarer tout gain, dépôt ou redemption conformément à la législation locale.
+
+**Âge** : Réservé aux personnes majeures (≥18 ans) et éligibles dans leur pays.
+
+**Modification** : Le projet se réserve le droit d'évoluer la stratégie ou le code tout en respectant l'esprit zéro-liquidation et accumulation BTC.
 
 ---
 
