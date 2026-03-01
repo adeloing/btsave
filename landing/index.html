@@ -292,6 +292,16 @@ document.addEventListener('DOMContentLoaded', () => {
   function run() {
     const full = phrases[idx];
     idx = (idx + 1) % phrases.length;
+    // Randomly switch hero image ~50% of the time
+    const wrap = document.querySelector('.hero-wrap');
+    const img = document.getElementById('heroImg');
+    if (Math.random() < 0.5) {
+      img.src = 'tpb-hero-cropped.jpg';
+      wrap.classList.add('storm');
+    } else {
+      img.src = 'tpb-step0-dock.jpg';
+      wrap.classList.remove('storm');
+    }
     typeText(full, 0, () => {
       const base = full.slice(0, full.length - delWord.length);
       delText(full, full.length, base.length, () => {
