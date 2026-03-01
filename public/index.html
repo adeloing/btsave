@@ -57,6 +57,10 @@
   .hf-bar { height: 6px; border-radius: 3px; background: var(--border); margin-top: 6px; overflow: hidden; }
   .hf-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
   .footer { text-align: center; color: var(--muted); font-size: 10px; padding: 8px 0 20px; }
+  .typewriter { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; min-height: 28px; text-align: center; margin: 10px 0 4px; font-family: 'SF Mono', 'Fira Code', monospace; }
+  .typewriter .cursor { display: inline-block; width: 2px; height: 1.1em; background: var(--text); margin-left: 2px; vertical-align: text-bottom; animation: cursorBlink 0.7s infinite; }
+  .typewriter .orange-word { color: var(--orange); }
+  @keyframes cursorBlink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
   .loading { text-align: center; padding: 40px; color: var(--muted); }
   .dot-pulse { display: inline-block; animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
@@ -148,6 +152,7 @@ function render(d) {
       <div class="header-top">
         <div>
           <img src="logo.svg" alt="BTSAVE" style="height:30px">
+          <div class="typewriter" id="typewriter"><span class="cursor"></span></div>
           <div class="nav-toggle">
             <a href="/" class="nav-btn active">PROD</a>
             <a href="/simu.html" class="nav-btn">SIMU</a>
@@ -697,6 +702,58 @@ async function closePosition(instrument, btn) {
 
 load();
 setInterval(load, 60000);
+
+// Typewriter effect
+(function typewriterEffect() {
+  const el = document.getElementById('typewriter');
+  if (!el) return;
+  
+  const fullText = 'Come aboard the hype train';
+  const wordToDelete = 'train';
+  const wordToReplace = 'boat';
+  const typeSpeed = 70;
+  const deleteSpeed = 90;
+  const pauseAfterType = 1200;
+  const pauseAfterDelete = 400;
+  const pauseBeforeRestart = 5000;
+  
+  function setCursor() { return '<span class="cursor"></span>'; }
+  
+  function typeText(text, idx, cb) {
+    if (idx > text.length) { setTimeout(cb, pauseAfterType); return; }
+    el.innerHTML = text.slice(0, idx) + setCursor();
+    setTimeout(() => typeText(text, idx + 1, cb), typeSpeed);
+  }
+  
+  function deleteWord(text, endIdx, targetIdx, cb) {
+    if (endIdx <= targetIdx) { setTimeout(cb, pauseAfterDelete); return; }
+    el.innerHTML = text.slice(0, endIdx - 1) + setCursor();
+    setTimeout(() => deleteWord(text, endIdx - 1, targetIdx, cb), deleteSpeed);
+  }
+  
+  function typeReplacement(base, word, idx, cb) {
+    if (idx > word.length) { setTimeout(cb, pauseBeforeRestart); return; }
+    el.innerHTML = base + '<span class="orange-word">' + word.slice(0, idx) + '</span>' + setCursor();
+    setTimeout(() => typeReplacement(base, word, idx + 1, cb), typeSpeed);
+  }
+  
+  function run() {
+    // Phase 1: type "Come aboard the hype train"
+    typeText(fullText, 0, () => {
+      // Phase 2: delete "train" letter by letter from end
+      const baseText = fullText.slice(0, fullText.length - wordToDelete.length);
+      deleteWord(fullText, fullText.length, baseText.length, () => {
+        // Phase 3: type "boat" in orange
+        typeReplacement(baseText, wordToReplace, 0, () => {
+          // Loop
+          run();
+        });
+      });
+    });
+  }
+  
+  run();
+})();
 </script>
 </body>
 </html>
