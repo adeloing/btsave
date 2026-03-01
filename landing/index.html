@@ -32,10 +32,6 @@
 
   /* Connect Wallet button */
   .connect-btn {
-    position: absolute;
-    top: 14px;
-    right: 14px;
-    z-index: 10;
     background: linear-gradient(135deg, #2e8b3a 0%, #1a6b28 100%);
     color: #fff;
     border: none;
@@ -187,17 +183,19 @@
 <body>
 
 <div class="card">
-  <!-- Nav buttons -->
-  <a href="/tpb/project.html" class="connect-btn" style="left:14px;right:auto">Project</a>
-  <a href="/tpb/mint.html" class="connect-btn" style="left:50%;right:auto;transform:translateX(-50%)">Mint</a>
-  <button class="connect-btn" id="connectBtn" onclick="fakeConnect()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="2" y="6" width="20" height="14" rx="2"/>
-      <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
-      <path d="M2 10h20"/>
-    </svg>
-    <span id="btnText">Connect</span>
-  </button>
+  <!-- Nav bar -->
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:rgba(0,0,0,0.6);border-bottom:1px solid rgba(255,165,0,0.1);position:relative;z-index:10;">
+    <a href="/tpb/project.html" style="text-decoration:none;font-family:'Inter',sans-serif;font-weight:700;font-size:12px;letter-spacing:0.5px;padding:7px 14px;border-radius:9px;color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.05);transition:all 0.2s;">Project</a>
+    <a href="/tpb/mint.html" style="text-decoration:none;font-family:'Inter',sans-serif;font-weight:700;font-size:12px;letter-spacing:0.5px;padding:7px 14px;border-radius:9px;color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.05);transition:all 0.2s;">Mint</a>
+    <button class="connect-btn" id="connectBtn" onclick="fakeConnect()" style="position:relative;top:auto;right:auto;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="6" width="20" height="14" rx="2"/>
+        <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
+        <path d="M2 10h20"/>
+      </svg>
+      <span id="btnText">Connect</span>
+    </button>
+  </div>
 
   <!-- Hero illustration — switches based on current step -->
   <div class="hero-wrap">

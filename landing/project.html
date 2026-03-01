@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Project — Turbo Paper Boat</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="nav.css">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -30,46 +31,35 @@
   .card-bg {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: url('tpb-project-bg.jpg') center bottom/70% no-repeat;
-    opacity: 0.4;
+    background: url('tpb-project-bg.jpg') center center/contain no-repeat;
+    opacity: 0.5;
     pointer-events: none;
   }
   .content {
     position: relative;
     z-index: 1;
-    padding: 24px 22px 30px;
+    padding: 20px 20px 28px;
   }
-  .back {
-    display: inline-block;
-    color: rgba(255,255,255,0.5);
-    text-decoration: none;
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 18px;
-    transition: color 0.2s;
-  }
-  .back:hover { color: #f0a020; }
 
   h1 {
     font-family: 'Orbitron', monospace;
     font-weight: 900;
-    font-size: 26px;
+    font-size: 24px;
     color: #f0a020;
     text-align: center;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
     text-shadow: 0 2px 16px rgba(240,160,32,0.3);
   }
   .tagline {
     text-align: center;
     font-size: 13px;
     color: rgba(255,255,255,0.5);
-    margin-bottom: 24px;
+    margin-bottom: 22px;
     font-style: italic;
   }
 
-  /* Sections */
   .section {
-    background: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.45);
     backdrop-filter: blur(4px);
     border: 1px solid rgba(255,165,0,0.1);
     border-radius: 12px;
@@ -94,7 +84,6 @@
   .section strong { color: #f0a020; }
   .section .green { color: #3aae4a; }
 
-  /* Bullet list */
   .features {
     list-style: none;
     padding: 0;
@@ -114,7 +103,6 @@
     font-size: 11px;
   }
 
-  /* Links */
   .links {
     display: flex;
     gap: 10px;
@@ -146,8 +134,8 @@
 
   @media (max-width: 440px) {
     .card { border-radius: 12px; }
-    .content { padding: 18px 16px 24px; }
-    h1 { font-size: 22px; }
+    .content { padding: 16px 14px 22px; }
+    h1 { font-size: 20px; }
   }
 </style>
 </head>
@@ -155,9 +143,15 @@
 
 <div class="card">
   <div class="card-bg"></div>
-  <div class="content">
 
-    <a href="/tpb/" class="back">← Back to TPB</a>
+  <div class="nav-bar">
+    <a href="/tpb/" class="nav-home">⚡</a>
+    <a href="/tpb/project.html" class="nav-link active">Project</a>
+    <a href="/tpb/mint.html" class="nav-link">Mint</a>
+    <a href="/tpb/journey.html" class="nav-link">My Journey</a>
+  </div>
+
+  <div class="content">
 
     <h1>🚢 The Project</h1>
     <p class="tagline">Bitcoin yield. Protected. Rewarded.</p>

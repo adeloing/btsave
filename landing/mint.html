@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mint TPB — Turbo Paper Boat</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="nav.css">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -35,10 +36,7 @@
     pointer-events: none;
   }
 
-  /* Captain image — not full bleed */
-  .captain-wrap {
-    padding: 20px 20px 0;
-  }
+  .captain-wrap { position: relative; z-index: 1; padding: 16px 20px 0; }
   .captain-img {
     width: 100%;
     border-radius: 14px;
@@ -46,19 +44,7 @@
     border: 1px solid rgba(255,165,0,0.15);
   }
 
-  .content { position: relative; z-index: 1; padding: 20px 20px 28px; }
-  .captain-wrap { position: relative; z-index: 1; }
-
-  .back {
-    display: inline-block;
-    color: rgba(255,255,255,0.5);
-    text-decoration: none;
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 16px;
-    transition: color 0.2s;
-  }
-  .back:hover { color: #f0a020; }
+  .content { position: relative; z-index: 1; padding: 16px 20px 28px; }
 
   h1 {
     font-family: 'Orbitron', monospace;
@@ -70,18 +56,18 @@
   .subtitle {
     font-size: 13px;
     color: rgba(255,255,255,0.45);
-    margin-bottom: 20px;
+    margin-bottom: 18px;
   }
 
-  /* Info row */
   .info-grid {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     gap: 8px;
-    margin-bottom: 20px;
+    margin-bottom: 18px;
   }
   .info-box {
-    background: rgba(255,255,255,0.04);
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(4px);
     border: 1px solid rgba(255,165,0,0.08);
     border-radius: 10px;
     padding: 12px 8px;
@@ -103,9 +89,9 @@
     margin-top: 4px;
   }
 
-  /* Mint form */
   .mint-form {
-    background: rgba(255,255,255,0.03);
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(4px);
     border: 1px solid rgba(255,165,0,0.1);
     border-radius: 14px;
     padding: 18px;
@@ -180,23 +166,6 @@
     color: #3aae4a;
   }
 
-  /* Fee warning */
-  .fee-note {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(240,160,32,0.08);
-    border: 1px solid rgba(240,160,32,0.15);
-    border-radius: 10px;
-    padding: 10px 14px;
-    margin-bottom: 16px;
-    font-size: 12px;
-    color: rgba(255,255,255,0.55);
-  }
-  .fee-note .icon { font-size: 16px; }
-  .fee-note strong { color: #f0a020; }
-
-  /* Mint button */
   .mint-btn {
     width: 100%;
     padding: 14px;
@@ -212,13 +181,9 @@
     transition: all 0.2s;
     box-shadow: 0 4px 20px rgba(240,160,32,0.3);
   }
-  .mint-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 28px rgba(240,160,32,0.45);
-  }
+  .mint-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 28px rgba(240,160,32,0.45); }
   .mint-btn:active { transform: translateY(0); }
 
-  /* Cycle lock notice */
   .lock-notice {
     text-align: center;
     margin-top: 14px;
@@ -229,8 +194,8 @@
 
   @media (max-width: 440px) {
     .card { border-radius: 12px; }
-    .captain-wrap { padding: 14px 14px 0; }
-    .content { padding: 16px 14px 22px; }
+    .captain-wrap { padding: 12px 14px 0; }
+    .content { padding: 14px 14px 22px; }
     .info-val { font-size: 13px; }
   }
 </style>
@@ -239,17 +204,22 @@
 
 <div class="card">
   <div class="card-bg"></div>
+
+  <div class="nav-bar">
+    <a href="/tpb/" class="nav-home">⚡</a>
+    <a href="/tpb/project.html" class="nav-link">Project</a>
+    <a href="/tpb/mint.html" class="nav-link active">Mint</a>
+    <a href="/tpb/journey.html" class="nav-link">My Journey</a>
+  </div>
+
   <div class="captain-wrap">
-    <img src="tpb-captain.jpg" alt="The Captain — Follow the captain" class="captain-img">
+    <img src="tpb-captain.jpg" alt="The Captain" class="captain-img">
   </div>
 
   <div class="content">
-    <a href="/tpb/" class="back">← Back to TPB</a>
-
     <h1>⚓ Mint TPB</h1>
     <p class="subtitle">Deposit WBTC, receive TPB tokens at NAV price</p>
 
-    <!-- Key info -->
     <div class="info-grid">
       <div class="info-box">
         <div class="info-val">$38.78</div>
@@ -265,7 +235,6 @@
       </div>
     </div>
 
-    <!-- Mint form -->
     <div class="mint-form">
       <div class="form-label">You deposit</div>
       <div class="input-row">
@@ -275,20 +244,12 @@
         </div>
         <button class="max-btn" onclick="setMax()">MAX</button>
       </div>
-
       <div class="estimate">
         <span class="label">You receive (est.)</span>
         <span class="value" id="tpbEstimate">— TPB</span>
       </div>
     </div>
 
-    <!-- Fee warning (shows when step > 0) -->
-    <div class="fee-note" id="feeNote" style="display:none;">
-      <span class="icon">⚠️</span>
-      <span>Entry fee: <strong id="feePercent">2%</strong> — minting near ATH incurs a fee to protect existing holders</span>
-    </div>
-
-    <!-- Mint button -->
     <button class="mint-btn" onclick="fakeMint()">MINT TPB ⚡</button>
 
     <div class="lock-notice">
@@ -299,20 +260,13 @@
 
 <script>
 const NAV = 38.78;
-const WBTC_BALANCE = 0.85; // fake balance
+const WBTC_BALANCE = 0.85;
 
 function updateEstimate() {
-  const input = document.getElementById('wbtcInput');
+  const val = parseFloat(document.getElementById('wbtcInput').value);
   const est = document.getElementById('tpbEstimate');
-  const val = parseFloat(input.value);
-  if (!val || val <= 0) {
-    est.textContent = '— TPB';
-    return;
-  }
-  // WBTC price ~$97,000 for demo
-  const wbtcUsd = val * 97000;
-  const tpb = wbtcUsd / NAV;
-  est.textContent = tpb.toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' TPB';
+  if (!val || val <= 0) { est.textContent = '— TPB'; return; }
+  est.textContent = ((val * 97000) / NAV).toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' TPB';
 }
 
 function setMax() {
@@ -332,8 +286,7 @@ function fakeMint() {
   btn.textContent = 'MINTING…';
   btn.style.background = 'linear-gradient(135deg, #3aae4a 0%, #1a8a2e 100%)';
   setTimeout(() => {
-    const wbtcUsd = val * 97000;
-    const tpb = (wbtcUsd / NAV).toLocaleString('en-US', { maximumFractionDigits: 1 });
+    const tpb = ((val * 97000) / NAV).toLocaleString('en-US', { maximumFractionDigits: 1 });
     btn.textContent = '✓ ' + tpb + ' TPB MINTED';
     setTimeout(() => {
       btn.textContent = 'MINT TPB ⚡';
