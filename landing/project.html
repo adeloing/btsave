@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project — Turbo Paper Boat</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+  }
+  .card {
+    position: relative;
+    width: 420px;
+    max-width: 95vw;
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid rgba(255,165,0,0.25);
+    box-shadow: 0 0 60px rgba(255,140,0,0.12), 0 0 120px rgba(0,0,0,0.8);
+    background: #111;
+  }
+  .card-bg {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: url('tpb-project-bg.jpg') center bottom/cover no-repeat;
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  .content {
+    position: relative;
+    z-index: 1;
+    padding: 24px 22px 30px;
+  }
+  .back {
+    display: inline-block;
+    color: rgba(255,255,255,0.5);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 18px;
+    transition: color 0.2s;
+  }
+  .back:hover { color: #f0a020; }
+
+  h1 {
+    font-family: 'Orbitron', monospace;
+    font-weight: 900;
+    font-size: 26px;
+    color: #f0a020;
+    text-align: center;
+    margin-bottom: 6px;
+    text-shadow: 0 2px 16px rgba(240,160,32,0.3);
+  }
+  .tagline {
+    text-align: center;
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 24px;
+    font-style: italic;
+  }
+
+  /* Sections */
+  .section {
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255,165,0,0.1);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-family: 'Orbitron', monospace;
+    font-weight: 700;
+    font-size: 13px;
+    color: #f0a020;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: rgba(255,255,255,0.7);
+  }
+  .section strong { color: #f0a020; }
+  .section .green { color: #3aae4a; }
+
+  /* Bullet list */
+  .features {
+    list-style: none;
+    padding: 0;
+  }
+  .features li {
+    font-size: 13px;
+    line-height: 1.6;
+    color: rgba(255,255,255,0.7);
+    padding-left: 20px;
+    position: relative;
+    margin-bottom: 4px;
+  }
+  .features li::before {
+    content: '⚡';
+    position: absolute;
+    left: 0;
+    font-size: 11px;
+  }
+
+  /* Links */
+  .links {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .link-btn {
+    flex: 1;
+    display: block;
+    text-align: center;
+    padding: 12px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  .link-btn.primary {
+    background: linear-gradient(135deg, #f0a020 0%, #d4851a 100%);
+    color: #fff;
+    box-shadow: 0 3px 16px rgba(240,160,32,0.3);
+  }
+  .link-btn.primary:hover { transform: translateY(-1px); box-shadow: 0 5px 24px rgba(240,160,32,0.4); }
+  .link-btn.secondary {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,165,0,0.15);
+    color: rgba(255,255,255,0.6);
+  }
+  .link-btn.secondary:hover { border-color: rgba(255,165,0,0.3); color: #f0a020; }
+
+  @media (max-width: 440px) {
+    .card { border-radius: 12px; }
+    .content { padding: 18px 16px 24px; }
+    h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="card-bg"></div>
+  <div class="content">
+
+    <a href="/tpb/" class="back">← Back to TPB</a>
+
+    <h1>🚢 The Project</h1>
+    <p class="tagline">Bitcoin yield. Protected. Rewarded.</p>
+
+    <div class="section">
+      <div class="section-title">📌 What is TPB?</div>
+      <p><strong>Turbo Paper Boat</strong> is a DeFi vault token backed by real BTC. Deposit WBTC, receive TPB tokens priced at <strong>NAV</strong>. Your Bitcoin works — you don't.</p>
+    </div>
+
+    <div class="section">
+      <div class="section-title">⚙️ How It Works</div>
+      <p>The strategy runs in <strong>cycles</strong> (ATH → ATH). On the way down, the vault <strong class="green">accumulates more BTC</strong> using leveraged grid shorts on Deribit + Aave borrowing. On the way up, shorts generate contango yield.</p>
+    </div>
+
+    <div class="section">
+      <div class="section-title">🛡️ Protection</div>
+      <ul class="features">
+        <li><strong>82% WBTC</strong> stays on Aave as collateral — never sold</li>
+        <li><strong>OTM puts</strong> funded by carry for crash protection</li>
+        <li><strong>Health Factor &gt;1.55</strong> enforced on-chain by the LSM module</li>
+        <li><strong>2/2 multisig</strong> for all critical operations — bots can't go rogue</li>
+        <li><strong>20 on-chain rules</strong> limit what bots can do (daily borrow cap, HF checks, kill switch)</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <div class="section-title">🏆 NFT Rewards</div>
+      <p>Hold TPB through cycles to earn <strong>NFT bonuses</strong> (Bronze → Silver → Gold → Diamond). NFTs multiply your share of rewards at each cycle end. Trade them freely.</p>
+    </div>
+
+    <div class="section">
+      <div class="section-title">🔑 Key Numbers</div>
+      <ul class="features">
+        <li>Allocation: <strong>82% WBTC / 15% USDC Aave / 3% Deribit</strong></li>
+        <li>Redeem: <strong class="green">Step 0 only</strong> (post-ATH, before next cycle locks)</li>
+        <li>Entry fee: <strong>0%</strong> at Step 0, up to <strong>8%</strong> near ATH</li>
+        <li>Auto-redeem: set your % — executes automatically each cycle</li>
+        <li>TPB tradeable on DEX anytime — no lock on secondary market</li>
+      </ul>
+    </div>
+
+    <div class="links">
+      <a href="/tpb/mint.html" class="link-btn primary">⚡ Mint TPB</a>
+      <a href="https://github.com/adeloing/btsave" target="_blank" class="link-btn secondary">📄 GitHub</a>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>
