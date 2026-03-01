@@ -235,7 +235,7 @@
 // Step 0 = calm dock, Step 1+ = storm sea
 const HERO_IMAGES = {
   calm: 'tpb-step0-dock.jpg',
-  storm: 'tpb-hero-cropped.jpg'
+  storm: 'tpb-storm-clean.jpg'
 };
 
 function updateHero(step) {
@@ -296,7 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const img = document.getElementById('heroImg');
     const isStorm = Math.random() < 0.5;
     if (isStorm) {
-      img.src = 'tpb-hero-cropped.jpg';
+      img.src = 'tpb-storm-clean.jpg';
       wrap.classList.add('storm');
       // Show active metrics in storm mode
       const totalSteps = Math.floor(Math.random() * 26) + 5; // 5-30
