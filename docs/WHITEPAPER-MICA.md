@@ -146,9 +146,28 @@ Code source complet et auditable : https://github.com/adeloing/btsave/tree/main/
 
 **Modification** : Le projet se réserve le droit d'évoluer la stratégie ou le code tout en respectant l'esprit zéro-liquidation et accumulation BTC.
 
+**Acceptation** : L'utilisation du protocole ou la détention de TPB vaut acceptation pleine et entière du présent whitepaper et des risques.
+
 ---
 
-## 8. Informations Environnementales (MiCA Art. 6(8))
+## 8. Gouvernance et Équipe
+
+- **Gouvernance** : 100 % on-chain + communauté GitHub/Discord. Pas de token de gouvernance.
+- **Équipe** : Développeur principal pseudonyme « adeloing » + contributeurs open-source. Aucun KYC public.
+- **Transparence** : Tout le code, la stratégie et les tests sont publics depuis le lancement.
+
+---
+
+## 9. Comment Participer
+
+1. Connecter un wallet compatible Ethereum (mainnet).
+2. Déposer uniquement du WBTC.
+3. Recevoir TPB instantanément.
+4. Suivre via dashboard + Telegram bot @BTSave\_bot.
+
+---
+
+## 10. Informations Environnementales (MiCA Art. 6(8))
 
 **Consensus** : Ethereum L1 utilise le Proof of Stake (PoS) depuis « The Merge » (septembre 2022), réduisant la consommation énergétique de ~99,95 % par rapport au Proof of Work.
 
@@ -158,7 +177,7 @@ Code source complet et auditable : https://github.com/adeloing/btsave/tree/main/
 
 ---
 
-## 9. Annexes
+## 11. Annexes
 
 ### A. Liens et Ressources
 
