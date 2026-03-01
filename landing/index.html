@@ -190,9 +190,14 @@
   <!-- Nav buttons -->
   <a href="/tpb/project.html" class="connect-btn" style="left:14px;right:auto">Project</a>
   <a href="/tpb/mint.html" class="connect-btn" style="left:50%;right:auto;transform:translateX(-50%)">Mint</a>
-  <a href="/tpb/journey.html" class="connect-btn" id="connectBtn" style="background:linear-gradient(135deg,#f0a020 0%,#d4851a 100%);box-shadow:0 2px 12px rgba(240,160,32,0.4);">
-    <span>⚡ My Journey</span>
-  </a>
+  <button class="connect-btn" id="connectBtn" onclick="fakeConnect()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="6" width="20" height="14" rx="2"/>
+      <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
+      <path d="M2 10h20"/>
+    </svg>
+    <span id="btnText">Connect</span>
+  </button>
 
   <!-- Hero illustration — switches based on current step -->
   <div class="hero-wrap">
@@ -313,7 +318,19 @@ document.addEventListener('DOMContentLoaded', () => {
   run();
 })();
 
-// connectWallet removed — direct link to journey
+function fakeConnect() {
+  const btn = document.getElementById('connectBtn');
+  const txt = document.getElementById('btnText');
+  txt.textContent = 'Connecting…';
+  setTimeout(() => {
+    const link = document.createElement('a');
+    link.href = '/tpb/journey.html';
+    link.className = 'connect-btn';
+    link.style.cssText = 'background:linear-gradient(135deg,#f0a020 0%,#d4851a 100%);box-shadow:0 2px 12px rgba(240,160,32,0.4);right:14px;';
+    link.innerHTML = '⚡ My Journey';
+    btn.replaceWith(link);
+  }, 600);
+}
 </script>
 
 </body>
