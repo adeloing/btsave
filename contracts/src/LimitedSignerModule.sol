@@ -219,7 +219,8 @@ contract LimitedSignerModule {
             require(codeHash == expectedCodeHash[to], "LSM: target code changed");
         }
 
-        txHash = keccak256(abi.encodePacked(to, data, value, block.timestamp, proposalCount));
+        // H2 fix: use abi.encode instead of abi.encodePacked to prevent hash collisions
+        txHash = keccak256(abi.encode(to, data, value, block.timestamp, proposalCount));
         proposalCount++;
 
         Proposal storage p = proposals[txHash];
@@ -346,8 +347,8 @@ contract LimitedSignerModule {
             emergencyGasActive = false;
         }
 
-        emit TxExecuted(txHash, p.to, success);
         require(success, "LSM: execution failed");
+        emit TxExecuted(txHash, p.to, success);
     }
 
     // ============================================================
