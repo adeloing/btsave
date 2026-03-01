@@ -77,6 +77,9 @@ contract LimitedSignerModule {
     // --- TVL cap ---
     uint256 public maxBorrowTvlBps = 400; // 4% of TVL per tx
 
+    // --- R20: Max daily borrow as % of TVL ---
+    uint256 public maxDailyBorrowTvlBps = 1200; // 12% of TVL per day
+
     // --- F2: Proposal TTL (default 30 min) ---
     uint256 public proposalTTL = 1800;
 
@@ -133,6 +136,7 @@ contract LimitedSignerModule {
     event BotRotated(address indexed oldBot, address indexed newBot);
     event RuleViolation(bytes32 indexed txHash, uint8 ruleNumber, string rule, string details);
     event DailyLimitReset(uint256 timestamp);
+    event EmergencyActionTriggered(bytes32 indexed txHash, string reason);
 
     // ============================================================
     //                       MODIFIERS
@@ -272,6 +276,7 @@ contract LimitedSignerModule {
      *   R17 — Options only if extra WBTC ≥ threshold (bot-side balance check)
      *   R18 — Rebalance amount ≤ 2% of total position (bot-side check)
      *   R19 — Borrow amount ≤ 4% of TVL (validateBorrow)
+     *   R20 — Daily borrow ≤ 12% of TVL (on-chain + validateBorrow)
      */
     /**
      * @notice Execute after threshold approvals. F3: only keeper or bot can call.
@@ -333,6 +338,14 @@ contract LimitedSignerModule {
             uint256 amount;
             assembly { amount := mload(add(d, 68)) }  // Second uint256 parameter
             require(dailyBorrowVolume + amount <= maxDailyBorrowVolume, "LSM: daily borrow limit exceeded");
+
+            // R20: daily borrow ≤ 12% of TVL
+            (uint256 totalCollateral,,,,,) = aavePool.getUserAccountData(address(safe));
+            require(
+                dailyBorrowVolume + amount <= totalCollateral * maxDailyBorrowTvlBps / 10000,
+                "LSM: daily borrow exceeds TVL cap (R20)"
+            );
+
             dailyBorrowVolume += amount;
         } else if (selector == 0x12aa3caf) {  // 1inch swap
             uint256 amount;
@@ -425,6 +438,11 @@ contract LimitedSignerModule {
         // R11: daily volume
         if (dailyBorrowVolume + amount > maxDailyBorrowVolume) {
             return (false, "LSM: daily volume exceeded");
+        }
+
+        // R20: daily borrow ≤ 12% of TVL
+        if (dailyBorrowVolume + amount > totalCollateral * maxDailyBorrowTvlBps / 10000) {
+            return (false, "LSM: daily borrow exceeds TVL cap (R20)");
         }
 
         return (true, "");
@@ -569,6 +587,10 @@ contract LimitedSignerModule {
 
     function setMaxBorrowTvlBps(uint256 newBps) external onlySafe {
         maxBorrowTvlBps = newBps;
+    }
+
+    function setMaxDailyBorrowTvlBps(uint256 newBps) external onlySafe {
+        maxDailyBorrowTvlBps = newBps;
     }
 
     function setProposalTTL(uint256 newTTL) external onlySafe {
