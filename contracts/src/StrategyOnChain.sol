@@ -629,27 +629,85 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
 
     // ======================== REBALANCING ========================
 
-    /// @notice Rebalance if allocation drifts ±3% or 14 days passed
-    function rebalance() external onlyRole(KEEPER_ROLE) {
-        if (block.timestamp < lastRebalanceTime + REBAL_INTERVAL) {
-            // Check drift
-            (uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct) = _getAllocationPcts();
-            bool drifted = _absDiff(wbtcPct, TARGET_WBTC_BPS) > REBAL_DRIFT_BPS
-                || _absDiff(bufferPct, TARGET_BUFFER_BPS) > REBAL_DRIFT_BPS
-                || _absDiff(hedgePct, TARGET_HEDGE_BPS) > REBAL_DRIFT_BPS;
-            if (!drifted) revert RebalanceTooSoon();
+    uint256 public constant MIN_REBAL_AMOUNT_USD = 100e8; // $100 minimum to avoid micro-swaps
+
+    /// @notice View for keeper: should we rebalance?
+    function shouldRebalance() public view returns (bool) {
+        if (block.timestamp >= lastRebalanceTime + REBAL_INTERVAL) return true;
+        (int256 wbtcDrift, ) = _calculateDriftBps();
+        return wbtcDrift > int256(REBAL_DRIFT_BPS) || wbtcDrift < -int256(REBAL_DRIFT_BPS);
+    }
+
+    /// @notice Calculate WBTC allocation drift from target (82%)
+    /// @return wbtcDrift Positive = WBTC overweight, negative = WBTC underweight
+    /// @return absDrift Absolute drift value
+    function _calculateDriftBps() internal view returns (int256 wbtcDrift, uint256 absDrift) {
+        (uint256 wbtcPct, , ) = _getAllocationPcts();
+        wbtcDrift = int256(wbtcPct) - int256(TARGET_WBTC_BPS);
+        absDrift = wbtcDrift >= 0 ? uint256(wbtcDrift) : uint256(-wbtcDrift);
+    }
+
+    /// @notice Rebalance portfolio toward 82/15/3 target allocation
+    /// @param slippageBps Custom slippage (0 = use default 0.5%)
+    function rebalance(uint256 slippageBps) external onlyRole(KEEPER_ROLE) {
+        if (!shouldRebalance()) revert RebalanceTooSoon();
+
+        slippageBps = slippageBps == 0 ? SWAP_SLIPPAGE_BPS : slippageBps;
+
+        (int256 wbtcDrift, uint256 absDrift) = _calculateDriftBps();
+        uint256 price = _wbtcPriceUsd();
+
+        if (wbtcDrift > int256(REBAL_DRIFT_BPS)) {
+            // WBTC overweight → withdraw some WBTC from AAVE, swap to USDC
+            // Calculate WBTC amount to sell (in 8 decimals)
+            uint256 tvlUsd8 = (this.totalAssets() * price) / WBTC_DECIMALS;
+            uint256 sellValueUsd8 = (tvlUsd8 * absDrift) / 10_000;
+
+            if (sellValueUsd8 > MIN_REBAL_AMOUNT_USD) {
+                uint256 wbtcToSell = (sellValueUsd8 * WBTC_DECIMALS) / price;
+                uint256 available = _availableWbtc();
+                if (wbtcToSell > available) wbtcToSell = available;
+
+                if (wbtcToSell > 0) {
+                    // Withdraw from AAVE
+                    aavePool.withdraw(address(wbtc), wbtcToSell, address(this));
+                    // Swap to USDC
+                    _swapWBTCtoUSDC(wbtcToSell, slippageBps);
+                }
+            }
+        } else if (wbtcDrift < -int256(REBAL_DRIFT_BPS)) {
+            // WBTC underweight → swap USDC to WBTC, supply to AAVE
+            uint256 tvlUsd8 = (this.totalAssets() * price) / WBTC_DECIMALS;
+            uint256 buyValueUsd8 = (tvlUsd8 * absDrift) / 10_000;
+
+            if (buyValueUsd8 > MIN_REBAL_AMOUNT_USD) {
+                // Convert USD (8 dec) → USDC (6 dec)
+                uint256 usdcToBuy = (buyValueUsd8 * USDC_DECIMALS) / USD_DECIMALS;
+                uint256 usdcBal = usdc.balanceOf(address(this));
+                // Keep 2% reserve
+                uint256 tvlUsdc6 = _tvlInUsdc6();
+                uint256 reserve = (tvlUsdc6 * USDC_RESERVE_BPS) / 10_000;
+                uint256 spendable = usdcBal > reserve ? usdcBal - reserve : 0;
+                if (usdcToBuy > spendable) usdcToBuy = spendable;
+
+                if (usdcToBuy > 0) {
+                    uint256 wbtcReceived = _swapUSDCtoWBTC(usdcToBuy, slippageBps);
+                    // Supply to AAVE
+                    if (wbtcReceived > 0) {
+                        wbtc.safeIncreaseAllowance(address(aavePool), wbtcReceived);
+                        aavePool.supply(address(wbtc), wbtcReceived, address(this), 0);
+                    }
+                }
+            }
         }
 
         lastRebalanceTime = block.timestamp;
 
         (uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct) = _getAllocationPcts();
         emit Rebalanced(wbtcPct, bufferPct, hedgePct);
-
-        // TODO: Execute actual rebalancing swaps
-        // - If WBTC overweight → borrow more USDC
-        // - If USDC overweight → buy WBTC
-        // - If hedge underweight → open more shorts/puts
     }
+
+    // Use rebalance(0) for default slippage
 
     function _getAllocationPcts() internal view returns (uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct) {
         uint256 price = _wbtcPriceUsd();
