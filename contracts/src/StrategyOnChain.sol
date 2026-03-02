@@ -9,6 +9,7 @@ import { IStrategyOnChain } from "./interfaces/IStrategyOnChain.sol";
 import { IAavePool, IAaveOracle, IAToken, IVariableDebtToken } from "./interfaces/IAaveV3.sol";
 import { IGMXExchangeRouter, IGMXReader, IOrderCallbackReceiver } from "./interfaces/IGMXV2.sol";
 import { AevoAdapter } from "./AevoAdapter.sol";
+import { ICamelotRouter } from "./interfaces/ICamelot.sol";
 
 /**
  * @title StrategyOnChain — Full On-Chain Arbitrum (Optimized)
@@ -70,6 +71,11 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
 
     // ======================== AEVO (PUTS) ========================
     AevoAdapter public aevoAdapter;
+
+    // ======================== DEX (CAMELOT) ========================
+    ICamelotRouter public dexRouter;
+    address public constant WETH = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
+    uint256 public constant SWAP_SLIPPAGE_BPS = 50; // 0.5% default
 
     // ======================== STRATEGY CONSTANTS ========================
     // Allocation
@@ -156,6 +162,9 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     event CashFlowExecuted(uint256 debtRepaid, uint256 wbtcBought, uint256 reserveKept);
     event Rebalanced(uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct);
     event AevoAdapterUpdated(address indexed oldAdapter, address indexed newAdapter);
+    event DexRouterUpdated(address indexed oldRouter, address indexed newRouter);
+    event BoughtWBTC(uint256 usdcIn, uint256 wbtcOut);
+    event SoldWBTC(uint256 wbtcIn, uint256 usdcOut);
     event PriceTracked(uint256 price, uint256 lowestSinceOpen);
 
     // ======================== ERRORS ========================
@@ -554,11 +563,68 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     }
 
     function _buyWBTC(uint256 usdcAmount) internal returns (uint256) {
-        // TODO: Implement swap USDC → WBTC via DEX (Uniswap/Camelot on Arbitrum)
-        // Then supply to AAVE
-        // For now, keep as USDC (will be implemented with DEX router)
-        emit WBTCAccumulated(0);
-        return 0;
+        if (usdcAmount == 0 || address(dexRouter) == address(0)) return 0;
+
+        uint256 wbtcReceived = _swapUSDCtoWBTC(usdcAmount, SWAP_SLIPPAGE_BPS);
+
+        // Supply bought WBTC to AAVE as collateral
+        if (wbtcReceived > 0) {
+            wbtc.safeIncreaseAllowance(address(aavePool), wbtcReceived);
+            aavePool.supply(address(wbtc), wbtcReceived, address(this), 0);
+        }
+
+        emit WBTCAccumulated(wbtcReceived);
+        return wbtcReceived;
+    }
+
+    // ======================== DEX SWAP HELPERS ========================
+
+    /// @notice Swap USDC → WETH → WBTC via Camelot
+    function _swapUSDCtoWBTC(uint256 usdcAmount, uint256 slippageBps) internal returns (uint256) {
+        address[] memory path = new address[](3);
+        path[0] = address(usdc);
+        path[1] = WETH;
+        path[2] = address(wbtc);
+
+        uint256[] memory amountsOut = dexRouter.getAmountsOut(usdcAmount, path);
+        uint256 minOut = (amountsOut[2] * (10_000 - slippageBps)) / 10_000;
+
+        usdc.forceApprove(address(dexRouter), usdcAmount);
+        uint256[] memory amounts = dexRouter.swapExactTokensForTokens(
+            usdcAmount, minOut, path, address(this), block.timestamp + 300
+        );
+
+        emit BoughtWBTC(usdcAmount, amounts[2]);
+        return amounts[2];
+    }
+
+    /// @notice Swap WBTC → WETH → USDC via Camelot (for rebalancing)
+    function _swapWBTCtoUSDC(uint256 wbtcAmount, uint256 slippageBps) internal returns (uint256) {
+        address[] memory path = new address[](3);
+        path[0] = address(wbtc);
+        path[1] = WETH;
+        path[2] = address(usdc);
+
+        uint256[] memory amountsOut = dexRouter.getAmountsOut(wbtcAmount, path);
+        uint256 minOut = (amountsOut[2] * (10_000 - slippageBps)) / 10_000;
+
+        wbtc.forceApprove(address(dexRouter), wbtcAmount);
+        uint256[] memory amounts = dexRouter.swapExactTokensForTokens(
+            wbtcAmount, minOut, path, address(this), block.timestamp + 300
+        );
+
+        emit SoldWBTC(wbtcAmount, amounts[2]);
+        return amounts[2];
+    }
+
+    /// @notice Keeper can manually trigger a WBTC purchase (with custom slippage)
+    function buyWBTC(uint256 usdcAmount, uint256 slippageBps) external onlyRole(KEEPER_ROLE) {
+        uint256 received = _swapUSDCtoWBTC(usdcAmount, slippageBps > 0 ? slippageBps : SWAP_SLIPPAGE_BPS);
+        // Supply to AAVE
+        if (received > 0) {
+            wbtc.safeIncreaseAllowance(address(aavePool), received);
+            aavePool.supply(address(wbtc), received, address(this), 0);
+        }
     }
 
     // ======================== REBALANCING ========================
@@ -853,6 +919,11 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     function setAevoAdapter(AevoAdapter newAdapter) external onlyRole(DEFAULT_ADMIN_ROLE) {
         emit AevoAdapterUpdated(address(aevoAdapter), address(newAdapter));
         aevoAdapter = newAdapter;
+    }
+
+    function setDexRouter(address newRouter) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        emit DexRouterUpdated(address(dexRouter), newRouter);
+        dexRouter = ICamelotRouter(newRouter);
     }
 
     // ======================== RECEIVE ETH ========================
