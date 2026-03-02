@@ -5,3 +5,4 @@ node_modules/
 contracts/out/
 contracts/cache/
 package-lock.json
+.env
