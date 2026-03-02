@@ -54,7 +54,7 @@ contract NFTBonus {
     // ============================================================
 
     address public vault;
-    address public safe;
+    address public admin;
     uint256 public currentCycle;
 
     mapping(uint256 => mapping(address => uint256)) public balanceOf;
@@ -83,8 +83,8 @@ contract NFTBonus {
         _;
     }
 
-    modifier onlySafe() {
-        require(msg.sender == safe, "NFT: only safe");
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "NFT: only admin");
         _;
     }
 
@@ -92,9 +92,9 @@ contract NFTBonus {
     //                      CONSTRUCTOR
     // ============================================================
 
-    constructor(address _vault, address _safe, string memory _uri) {
+    constructor(address _vault, address _admin, string memory _uri) {
         vault = _vault;
-        safe = _safe;
+        admin = _admin;
         uri = _uri;
         currentCycle = 1;
     }
@@ -306,12 +306,17 @@ contract NFTBonus {
     //                    ADMIN
     // ============================================================
 
-    function setURI(string calldata newUri) external onlySafe {
+    function setURI(string calldata newUri) external onlyAdmin {
         uri = newUri;
     }
 
-    function setVault(address newVault) external onlySafe {
+    function setVault(address newVault) external onlyAdmin {
         vault = newVault;
+    }
+
+    function setAdmin(address newAdmin) external onlyAdmin {
+        require(newAdmin != address(0), "NFT: zero admin");
+        admin = newAdmin;
     }
 
     // ============================================================
