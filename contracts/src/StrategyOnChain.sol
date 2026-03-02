@@ -11,25 +11,34 @@ import { IGMXExchangeRouter, IGMXReader, IOrderCallbackReceiver } from "./interf
 import { AevoAdapter } from "./AevoAdapter.sol";
 
 /**
- * @title StrategyOnChain — Full On-Chain Arbitrum (V1)
- * @notice Manages WBTC on AAVE V3 (supply/borrow) + GMX V2 BTC short perps as hedge.
- *         Implements IOrderCallbackReceiver for async GMX order lifecycle.
+ * @title StrategyOnChain — Full On-Chain Arbitrum (Optimized)
+ * @notice Manages the TPB vault strategy: AAVE V3 + GMX V2 shorts + Aevo puts.
  *
- * Architecture:
- *   - WBTC supplied to AAVE as collateral
- *   - USDC borrowed from AAVE → used as GMX short collateral
- *   - Short BTC-PERP opened on GMX V2 as hedge
- *   - OTM puts via AevoAdapter for additional downside protection
- *   - On new ATH → close all shorts (async via keeper) + close all puts, enter CLOSING phase
+ * STRATEGY RULES (validated version):
  *
- * State machine:
- *   IDLE → HEDGED (shorts open) → CLOSING (close orders pending) → IDLE
+ *   Allocation: 82% WBTC / 15% USDC buffer / 3% hedging (2% GMX + 1% Aevo)
  *
- * Safety bounds:
- *   - Max 5% TVL per short
- *   - Max 50% AAVE LTV
- *   - Max 10% ATH jump per update
- *   - 1% max slippage on GMX orders
+ *   SHORTS GMX (2% TVL total):
+ *     - 1% "profit-taking": partial close at +12% / +25% / +40% profit
+ *     - 1% "insurance": close only on -8% recovery from bottom OR new ATH
+ *     - Trailing stop 60% max profit on both halves
+ *     - Max 3 reopenings per cycle at -8% / -15% from last open price
+ *
+ *   PUTS AEVO (1% TVL total):
+ *     - P1: 0.5% TVL, strike 60% ATH
+ *     - P2: 0.5% TVL, strike 85% ATH
+ *     - Reopen if BTC < -7% ATH OR HF < 2.6
+ *     - Roll down on +70% profit
+ *
+ *   CASH FLOW PRIORITY:
+ *     1. HF < 1.85 → 100% repay debt
+ *     2. HF 1.85-2.0 → 50% debt / 50% buy WBTC
+ *     3. HF ≥ 2.0 → priority buy WBTC
+ *     4. Keep 2% TVL USDC reserve
+ *
+ *   EXIT FEES: Progressive (in vault)
+ *   REBALANCING: ±3% or every 14 days
+ *   FULL UNWIND: automatic at new ATH
  */
 contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackReceiver {
     using SafeERC20 for IERC20;
@@ -51,7 +60,7 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     IGMXExchangeRouter public immutable gmxRouter;
     IGMXReader public immutable gmxReader;
     address public immutable gmxDataStore;
-    bytes32 public immutable gmxMarketKey;       // BTC-USD market on GMX V2
+    bytes32 public immutable gmxMarketKey;
     address public immutable gmxOrderVault;
 
     IERC20 public immutable wbtc;
@@ -62,38 +71,92 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     // ======================== AEVO (PUTS) ========================
     AevoAdapter public aevoAdapter;
 
-    // ======================== CONSTANTS ========================
-    uint256 public constant MAX_SHORT_SIZE_BPS  = 500;   // max 5% TVL per single short
-    uint256 public constant MAX_ATH_DELTA_BPS   = 1000;  // max 10% ATH jump per update
-    uint256 public constant MAX_LTV_BPS         = 5000;  // max 50% AAVE LTV utilisation
-    uint256 public constant SLIPPAGE_BPS        = 100;   // 1% max slippage on GMX
+    // ======================== STRATEGY CONSTANTS ========================
+    // Allocation
+    uint256 public constant TARGET_WBTC_BPS     = 8200;  // 82%
+    uint256 public constant TARGET_BUFFER_BPS   = 1500;  // 15%
+    uint256 public constant TARGET_HEDGE_BPS    = 300;    // 3%
+    uint256 public constant SHORT_ALLOC_BPS     = 200;    // 2% TVL for shorts
+    uint256 public constant PUT_ALLOC_BPS       = 100;    // 1% TVL for puts
+    uint256 public constant USDC_RESERVE_BPS    = 200;    // 2% TVL reserve
 
-    uint256 private constant USD_DECIMALS  = 1e8;   // AAVE oracle precision
-    uint256 private constant GMX_DECIMALS  = 1e30;  // GMX USD precision
+    // Short profit-taking thresholds
+    uint256 public constant PT_CLOSE_1_BPS      = 1200;   // +12% → close 30%
+    uint256 public constant PT_CLOSE_1_PCT      = 3000;   // 30% of position
+    uint256 public constant PT_CLOSE_2_BPS      = 2500;   // +25% → close 50% of remainder
+    uint256 public constant PT_CLOSE_2_PCT      = 5000;   // 50%
+    uint256 public constant PT_CLOSE_3_BPS      = 4000;   // +40% → close 100%
+    uint256 public constant PT_CLOSE_3_PCT      = 10000;  // 100%
+
+    // Insurance close
+    uint256 public constant INS_RECOVERY_BPS    = 800;    // close insurance at -8% recovery from bottom
+    uint256 public constant TRAILING_STOP_BPS   = 6000;   // 60% of max profit
+
+    // Reopening
+    uint256 public constant REOPEN_1_BPS        = 800;    // -8% from last open → reopen 50%
+    uint256 public constant REOPEN_2_BPS        = 1500;   // -15% from last open → reopen 100%
+    uint256 public constant MAX_REOPENINGS      = 3;
+
+    // Put reopening conditions
+    uint256 public constant PUT_REOPEN_DROP_BPS = 700;    // BTC < -7% ATH
+    uint256 public constant PUT_REOPEN_HF       = 2.6e18; // HF < 2.6
+    uint256 public constant PUT_ROLLDOWN_BPS    = 7000;   // +70% profit → roll down
+
+    // Cash flow HF thresholds
+    uint256 public constant HF_CRITICAL         = 1.85e18;
+    uint256 public constant HF_MODERATE         = 2.0e18;
+
+    // Rebalancing
+    uint256 public constant REBAL_DRIFT_BPS     = 300;    // ±3%
+    uint256 public constant REBAL_INTERVAL      = 14 days;
+
+    // Safety
+    uint256 public constant MAX_ATH_DELTA_BPS   = 1000;
+    uint256 public constant MAX_LTV_BPS         = 5000;
+    uint256 public constant SLIPPAGE_BPS        = 100;
+
+    uint256 private constant USD_DECIMALS  = 1e8;
+    uint256 private constant GMX_DECIMALS  = 1e30;
     uint256 private constant WBTC_DECIMALS = 1e8;
     uint256 private constant USDC_DECIMALS = 1e6;
 
     // ======================== SHORT POSITION TRACKING ========================
+    enum ShortType { PROFIT_TAKING, INSURANCE }
+
     struct ShortPosition {
         bytes32 gmxPositionKey;
         uint256 sizeUsd;          // GMX 30-decimal
         uint256 collateralUsdc;
+        uint256 openPrice;        // BTC price at open (8 dec)
+        uint256 maxProfitBps;     // max observed profit in BPS
+        ShortType shortType;
         bool active;
     }
     ShortPosition[] public shorts;
     mapping(bytes32 => uint256) public orderToShortIndex;
 
+    // ======================== CYCLE TRACKING ========================
+    uint256 public cycleReopenings;       // count of reopenings this cycle
+    uint256 public lastOpenPrice;         // BTC price at last short opening
+    uint256 public lowestPriceSinceOpen;  // for insurance recovery tracking
+    uint256 public lastRebalanceTime;
+
     // ======================== EVENTS ========================
     event ATHUpdated(uint256 oldATH, uint256 newATH);
     event PhaseChanged(Phase from, Phase to);
-    event ShortOpened(uint256 indexed index, uint256 sizeUsd, uint256 collateralUsdc);
-    event ShortClosed(uint256 indexed index);
+    event ShortOpened(uint256 indexed index, ShortType shortType, uint256 sizeUsd, uint256 collateralUsdc);
+    event ShortClosed(uint256 indexed index, ShortType shortType);
     event ShortCloseInitiated(uint256 indexed index, bytes32 orderKey);
+    event ShortPartialClose(uint256 indexed index, uint256 closePct, uint256 profitBps);
     event GMXOrderCallback(bytes32 indexed orderKey, bool executed);
     event DepositedToStrategy(uint256 amount);
     event WithdrawnFromStrategy(uint256 amount, address to);
     event DebtRepaid(uint256 amount);
+    event WBTCAccumulated(uint256 amount);
+    event CashFlowExecuted(uint256 debtRepaid, uint256 wbtcBought, uint256 reserveKept);
+    event Rebalanced(uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct);
     event AevoAdapterUpdated(address indexed oldAdapter, address indexed newAdapter);
+    event PriceTracked(uint256 price, uint256 lowestSinceOpen);
 
     // ======================== ERRORS ========================
     error OnlyVault();
@@ -104,6 +167,8 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     error LTVTooHigh(uint256 current, uint256 max);
     error InsufficientLiquidity();
     error ShortNotActive();
+    error MaxReopeningsReached();
+    error RebalanceTooSoon();
 
     // ======================== MODIFIERS ========================
     modifier onlyVault() {
@@ -142,6 +207,7 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         usdc = IERC20(usdc_);
         aWbtc = IAToken(aWbtc_);
         debtUsdc = IVariableDebtToken(debtUsdc_);
+        lastRebalanceTime = block.timestamp;
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(KEEPER_ROLE, msg.sender);
@@ -149,7 +215,6 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
 
     // ======================== VAULT INTERFACE ========================
 
-    /// @inheritdoc IStrategyOnChain
     function deposit(uint256 amount) external override onlyVault {
         wbtc.safeTransferFrom(vault, address(this), amount);
         wbtc.safeIncreaseAllowance(address(aavePool), amount);
@@ -157,7 +222,6 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         emit DepositedToStrategy(amount);
     }
 
-    /// @inheritdoc IStrategyOnChain
     function withdraw(uint256 amount, address to) external override onlyVault returns (uint256) {
         uint256 available = _availableWbtc();
         if (amount > available) revert InsufficientLiquidity();
@@ -168,11 +232,9 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
 
     // ======================== ATH MANAGEMENT ========================
 
-    /// @notice Keeper updates ATH. If new ATH while hedged → initiate close of all shorts.
     function updateATH(uint256 newPrice) external onlyRole(KEEPER_ROLE) {
         if (newPrice <= currentATH) return;
 
-        // Safety: cap max single jump
         if (currentATH > 0) {
             uint256 delta = ((newPrice - currentATH) * 10_000) / currentATH;
             if (delta > MAX_ATH_DELTA_BPS) revert ATHDeltaTooLarge(delta);
@@ -182,42 +244,66 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         currentATH = newPrice;
         emit ATHUpdated(oldATH, newPrice);
 
-        // If hedged → enter CLOSING phase (keeper must then call closeShort for each)
+        // Full unwind at new ATH
         if (phase == Phase.HEDGED) {
             _enterClosingPhase();
         }
+
+        // Reset cycle counters
+        cycleReopenings = 0;
     }
 
-    // ======================== OPEN SHORT ========================
+    // ======================== OPEN SHORTS (SPLIT: PROFIT-TAKING + INSURANCE) ========================
 
-    /// @notice Open a short BTC position on GMX V2. Borrows USDC from AAVE.
-    /// @param sizeUsd GMX 30-decimal size in USD
-    /// @param collateralUsdc USDC amount (6 decimals) to borrow and use as collateral
-    function openShort(
-        uint256 sizeUsd,
-        uint256 collateralUsdc
+    /// @notice Open both halves: 1% profit-taking + 1% insurance
+    /// @param totalSizeUsd Total short size in GMX 30-decimal USD
+    /// @param totalCollateralUsdc Total USDC collateral (6 dec)
+    function openHedgeShorts(
+        uint256 totalSizeUsd,
+        uint256 totalCollateralUsdc
     ) external payable onlyRole(KEEPER_ROLE) {
         if (phase == Phase.CLOSING) revert PriceDiscoveryActive();
 
-        // Bound: max 5% TVL per short
-        uint256 tvlWbtc = this.totalAssets();
-        uint256 price = _wbtcPriceUsd();
-        uint256 tvlUsd30 = tvlWbtc * price * (GMX_DECIMALS / USD_DECIMALS) / WBTC_DECIMALS;
-        uint256 maxSize = (tvlUsd30 * MAX_SHORT_SIZE_BPS) / 10_000;
-        if (sizeUsd > maxSize) revert ShortTooLarge(sizeUsd, maxSize);
+        uint256 halfSize = totalSizeUsd / 2;
+        uint256 halfCollateral = totalCollateralUsdc / 2;
 
-        // Borrow USDC from AAVE (variable rate = 2)
-        aavePool.borrow(address(usdc), collateralUsdc, 2, 0, address(this));
-
-        // Validate LTV post-borrow
+        // Borrow total USDC from AAVE
+        aavePool.borrow(address(usdc), totalCollateralUsdc, 2, 0, address(this));
         _checkLTV();
 
-        // Send collateral + execution fee to GMX
+        uint256 price = _wbtcPriceUsd();
+        lastOpenPrice = price;
+        lowestPriceSinceOpen = price;
+
+        // Open profit-taking half
+        _openShortGMX(halfSize, halfCollateral, price, ShortType.PROFIT_TAKING, msg.value / 2);
+
+        // Open insurance half
+        _openShortGMX(halfSize, halfCollateral, price, ShortType.INSURANCE, msg.value - msg.value / 2);
+
+        if (phase == Phase.IDLE) {
+            phase = Phase.HEDGED;
+            emit PhaseChanged(Phase.IDLE, Phase.HEDGED);
+        }
+    }
+
+    function _openShortGMX(
+        uint256 sizeUsd,
+        uint256 collateralUsdc,
+        uint256 price,
+        ShortType sType,
+        uint256 execFee
+    ) internal {
+        // Bound check
+        uint256 tvlWbtc = this.totalAssets();
+        uint256 tvlUsd30 = tvlWbtc * price * (GMX_DECIMALS / USD_DECIMALS) / WBTC_DECIMALS;
+        uint256 maxSize = (tvlUsd30 * SHORT_ALLOC_BPS) / 10_000;
+        if (sizeUsd > maxSize) revert ShortTooLarge(sizeUsd, maxSize);
+
         usdc.safeIncreaseAllowance(address(gmxRouter), collateralUsdc);
         gmxRouter.sendTokens(address(usdc), gmxOrderVault, collateralUsdc);
-        gmxRouter.sendWnt{value: msg.value}(gmxOrderVault, msg.value);
+        gmxRouter.sendWnt{value: execFee}(gmxOrderVault, execFee);
 
-        // Build order: MarketIncrease short
         uint256 acceptablePrice30 = price * (GMX_DECIMALS / USD_DECIMALS)
             * (10_000 - SLIPPAGE_BPS) / 10_000;
 
@@ -237,35 +323,130 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
                 initialCollateralDeltaAmount: collateralUsdc,
                 triggerPrice: 0,
                 acceptablePrice: acceptablePrice30,
-                executionFee: msg.value,
+                executionFee: execFee,
                 callbackGasLimit: 300_000,
                 minOutputAmount: 0
             }),
-            orderType: bytes32(uint256(1)),    // MarketIncrease
+            orderType: bytes32(uint256(1)),
             decreasePositionSwapType: bytes32(0),
-            isLong: false,                      // SHORT
+            isLong: false,
             shouldUnwrapNativeToken: false,
             referralCode: bytes32(0)
         });
 
         bytes32 orderKey = gmxRouter.createOrder(params);
 
-        // Track position (not active until callback confirms)
         uint256 idx = shorts.length;
         shorts.push(ShortPosition({
             gmxPositionKey: orderKey,
             sizeUsd: sizeUsd,
             collateralUsdc: collateralUsdc,
+            openPrice: price,
+            maxProfitBps: 0,
+            shortType: sType,
             active: false
         }));
         orderToShortIndex[orderKey] = idx;
 
-        if (phase == Phase.IDLE) {
-            phase = Phase.HEDGED;
-            emit PhaseChanged(Phase.IDLE, Phase.HEDGED);
+        emit ShortOpened(idx, sType, sizeUsd, collateralUsdc);
+    }
+
+    // ======================== KEEPER: CHECK & MANAGE POSITIONS ========================
+
+    /// @notice Keeper calls this periodically to manage positions based on strategy rules.
+    ///         Tracks price, checks profit-taking thresholds, insurance recovery, trailing stops.
+    function managePositions() external onlyRole(KEEPER_ROLE) {
+        uint256 price = _wbtcPriceUsd();
+
+        // Track lowest price for insurance recovery
+        if (price < lowestPriceSinceOpen) {
+            lowestPriceSinceOpen = price;
+        }
+        emit PriceTracked(price, lowestPriceSinceOpen);
+
+        for (uint256 i = 0; i < shorts.length; i++) {
+            ShortPosition storage pos = shorts[i];
+            if (!pos.active) continue;
+
+            // Calculate current profit in BPS
+            uint256 profitBps = 0;
+            if (price < pos.openPrice) {
+                profitBps = ((pos.openPrice - price) * 10_000) / pos.openPrice;
+            }
+
+            // Update max profit
+            if (profitBps > pos.maxProfitBps) {
+                pos.maxProfitBps = profitBps;
+            }
+
+            // === TRAILING STOP (both halves) ===
+            // If profit dropped below 60% of max observed profit, close
+            if (pos.maxProfitBps > 500 && profitBps > 0) { // only if max was meaningful (>5%)
+                uint256 trailingThreshold = (pos.maxProfitBps * TRAILING_STOP_BPS) / 10_000;
+                if (profitBps < trailingThreshold) {
+                    // Trailing stop triggered — mark for close
+                    // Keeper must call closeShort(i) separately due to async GMX
+                    emit ShortPartialClose(i, 10_000, profitBps);
+                }
+            }
+
+            if (pos.shortType == ShortType.PROFIT_TAKING) {
+                // === PROFIT-TAKING RULES ===
+                if (profitBps >= PT_CLOSE_3_BPS) {
+                    emit ShortPartialClose(i, PT_CLOSE_3_PCT, profitBps);
+                } else if (profitBps >= PT_CLOSE_2_BPS) {
+                    emit ShortPartialClose(i, PT_CLOSE_2_PCT, profitBps);
+                } else if (profitBps >= PT_CLOSE_1_BPS) {
+                    emit ShortPartialClose(i, PT_CLOSE_1_PCT, profitBps);
+                }
+            } else {
+                // === INSURANCE RULES ===
+                // Close on recovery: price recovered -8% from the lowest point
+                if (lowestPriceSinceOpen > 0 && price > lowestPriceSinceOpen) {
+                    uint256 recoveryBps = ((price - lowestPriceSinceOpen) * 10_000) / lowestPriceSinceOpen;
+                    if (recoveryBps >= INS_RECOVERY_BPS) {
+                        emit ShortPartialClose(i, 10_000, profitBps);
+                    }
+                }
+            }
+        }
+    }
+
+    /// @notice Check if shorts should be reopened based on price drops from last open
+    function checkReopening() external view returns (bool shouldReopen, uint256 reopenPct) {
+        if (cycleReopenings >= MAX_REOPENINGS) return (false, 0);
+        uint256 price = _wbtcPriceUsd();
+        if (lastOpenPrice == 0) return (false, 0);
+
+        uint256 dropBps = 0;
+        if (price < lastOpenPrice) {
+            dropBps = ((lastOpenPrice - price) * 10_000) / lastOpenPrice;
         }
 
-        emit ShortOpened(idx, sizeUsd, collateralUsdc);
+        if (dropBps >= REOPEN_2_BPS) return (true, 10_000);  // 100%
+        if (dropBps >= REOPEN_1_BPS) return (true, 5_000);   // 50%
+        return (false, 0);
+    }
+
+    /// @notice Keeper calls to reopen shorts after price drop
+    function reopenShorts(
+        uint256 sizeUsd,
+        uint256 collateralUsdc
+    ) external payable onlyRole(KEEPER_ROLE) {
+        if (cycleReopenings >= MAX_REOPENINGS) revert MaxReopeningsReached();
+        cycleReopenings++;
+
+        uint256 price = _wbtcPriceUsd();
+        lastOpenPrice = price;
+
+        aavePool.borrow(address(usdc), collateralUsdc, 2, 0, address(this));
+        _checkLTV();
+
+        uint256 halfSize = sizeUsd / 2;
+        uint256 halfCollateral = collateralUsdc / 2;
+
+        _openShortGMX(halfSize, halfCollateral, price, ShortType.PROFIT_TAKING, msg.value / 2);
+        _openShortGMX(halfSize, halfCollateral, price, ShortType.INSURANCE, msg.value - msg.value / 2);
     }
 
     // ======================== CLOSE SHORT ========================
@@ -279,13 +460,12 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         phase = Phase.CLOSING;
         emit PhaseChanged(Phase.HEDGED, Phase.CLOSING);
 
-        // Close all Aevo puts on ATH reset
+        // Close all Aevo puts on ATH
         if (address(aevoAdapter) != address(0)) {
             try aevoAdapter.closeAllPuts() {} catch {}
         }
     }
 
-    /// @notice Keeper closes one short at a time (each needs ETH for GMX execution fee)
     function closeShort(uint256 index) external payable onlyRole(KEEPER_ROLE) {
         ShortPosition storage pos = shorts[index];
         if (!pos.active) revert ShortNotActive();
@@ -294,7 +474,7 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
 
         uint256 price = _wbtcPriceUsd();
         uint256 acceptablePrice30 = price * (GMX_DECIMALS / USD_DECIMALS)
-            * (10_000 + SLIPPAGE_BPS) / 10_000;  // higher = worse for short close
+            * (10_000 + SLIPPAGE_BPS) / 10_000;
 
         address[] memory emptyPath = new address[](0);
 
@@ -316,7 +496,7 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
                 callbackGasLimit: 300_000,
                 minOutputAmount: 0
             }),
-            orderType: bytes32(uint256(4)),    // MarketDecrease
+            orderType: bytes32(uint256(4)),
             decreasePositionSwapType: bytes32(0),
             isLong: false,
             shouldUnwrapNativeToken: false,
@@ -329,24 +509,162 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         emit ShortCloseInitiated(index, orderKey);
     }
 
+    // ======================== CASH FLOW MANAGEMENT ========================
+
+    /// @notice Execute cash flow priority rules based on HF
+    function executeCashFlow() external onlyRole(KEEPER_ROLE) {
+        uint256 usdcBal = usdc.balanceOf(address(this));
+        if (usdcBal == 0) return;
+
+        uint256 hf = _getHealthFactor();
+        uint256 tvlUsdc6 = _tvlInUsdc6();
+        uint256 reserveTarget = (tvlUsdc6 * USDC_RESERVE_BPS) / 10_000;
+
+        // Keep reserve
+        uint256 available = usdcBal > reserveTarget ? usdcBal - reserveTarget : 0;
+        if (available == 0) return;
+
+        uint256 debtPaid = 0;
+        uint256 wbtcBought = 0;
+
+        if (hf < HF_CRITICAL) {
+            // 100% to repay debt
+            debtPaid = _repayDebt(available);
+        } else if (hf < HF_MODERATE) {
+            // 50/50 debt + WBTC
+            uint256 halfDebt = available / 2;
+            debtPaid = _repayDebt(halfDebt);
+            wbtcBought = _buyWBTC(available - halfDebt);
+        } else {
+            // Priority WBTC
+            wbtcBought = _buyWBTC(available);
+        }
+
+        emit CashFlowExecuted(debtPaid, wbtcBought, reserveTarget);
+    }
+
+    function _repayDebt(uint256 amount) internal returns (uint256) {
+        uint256 debt = debtUsdc.balanceOf(address(this));
+        if (debt == 0 || amount == 0) return 0;
+        uint256 repayAmount = amount < debt ? amount : debt;
+        usdc.safeIncreaseAllowance(address(aavePool), repayAmount);
+        aavePool.repay(address(usdc), repayAmount, 2, address(this));
+        emit DebtRepaid(repayAmount);
+        return repayAmount;
+    }
+
+    function _buyWBTC(uint256 usdcAmount) internal returns (uint256) {
+        // TODO: Implement swap USDC → WBTC via DEX (Uniswap/Camelot on Arbitrum)
+        // Then supply to AAVE
+        // For now, keep as USDC (will be implemented with DEX router)
+        emit WBTCAccumulated(0);
+        return 0;
+    }
+
+    // ======================== REBALANCING ========================
+
+    /// @notice Rebalance if allocation drifts ±3% or 14 days passed
+    function rebalance() external onlyRole(KEEPER_ROLE) {
+        if (block.timestamp < lastRebalanceTime + REBAL_INTERVAL) {
+            // Check drift
+            (uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct) = _getAllocationPcts();
+            bool drifted = _absDiff(wbtcPct, TARGET_WBTC_BPS) > REBAL_DRIFT_BPS
+                || _absDiff(bufferPct, TARGET_BUFFER_BPS) > REBAL_DRIFT_BPS
+                || _absDiff(hedgePct, TARGET_HEDGE_BPS) > REBAL_DRIFT_BPS;
+            if (!drifted) revert RebalanceTooSoon();
+        }
+
+        lastRebalanceTime = block.timestamp;
+
+        (uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct) = _getAllocationPcts();
+        emit Rebalanced(wbtcPct, bufferPct, hedgePct);
+
+        // TODO: Execute actual rebalancing swaps
+        // - If WBTC overweight → borrow more USDC
+        // - If USDC overweight → buy WBTC
+        // - If hedge underweight → open more shorts/puts
+    }
+
+    function _getAllocationPcts() internal view returns (uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct) {
+        uint256 price = _wbtcPriceUsd();
+        if (price == 0) return (0, 0, 0);
+
+        uint256 wbtcVal = (aWbtc.balanceOf(address(this)) * price) / WBTC_DECIMALS;
+        uint256 usdcVal = (usdc.balanceOf(address(this)) * USD_DECIMALS) / USDC_DECIMALS;
+        // Hedge value = GMX collateral + Aevo puts
+        uint256 hedgeVal = _totalHedgeValueUsd8();
+
+        uint256 total = wbtcVal + usdcVal + hedgeVal;
+        if (total == 0) return (0, 0, 0);
+
+        wbtcPct = (wbtcVal * 10_000) / total;
+        bufferPct = (usdcVal * 10_000) / total;
+        hedgePct = (hedgeVal * 10_000) / total;
+    }
+
+    function _totalHedgeValueUsd8() internal view returns (uint256) {
+        uint256 gmxVal = 0;
+        for (uint256 i = 0; i < shorts.length; i++) {
+            if (shorts[i].active) {
+                gmxVal += (shorts[i].collateralUsdc * USD_DECIMALS) / USDC_DECIMALS;
+            }
+        }
+        uint256 aevoVal = 0;
+        if (address(aevoAdapter) != address(0)) {
+            aevoVal = (aevoAdapter.totalPutValue() * USD_DECIMALS) / USDC_DECIMALS;
+        }
+        return gmxVal + aevoVal;
+    }
+
+    function _absDiff(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a > b ? a - b : b - a;
+    }
+
+    // ======================== PUT MANAGEMENT HELPERS ========================
+
+    /// @notice Check if puts should be reopened
+    function shouldReopenPuts() external view returns (bool) {
+        if (address(aevoAdapter) == address(0)) return false;
+        if (aevoAdapter.activePutCount() >= 2) return false; // already have puts
+
+        uint256 price = _wbtcPriceUsd();
+
+        // Condition 1: BTC < -7% ATH
+        if (currentATH > 0 && price < (currentATH * (10_000 - PUT_REOPEN_DROP_BPS)) / 10_000) {
+            return true;
+        }
+
+        // Condition 2: HF < 2.6
+        uint256 hf = _getHealthFactor();
+        if (hf < PUT_REOPEN_HF) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// @notice Check if a put should be rolled down (+70% profit)
+    function shouldRollDown(uint8 palier) external view returns (bool) {
+        if (address(aevoAdapter) == address(0)) return false;
+        (, , uint256 collateral, , uint256 currentValue, bool active) = aevoAdapter.getPut(palier);
+        if (!active || collateral == 0) return false;
+        uint256 profitBps = ((currentValue - collateral) * 10_000) / collateral;
+        return currentValue > collateral && profitBps >= PUT_ROLLDOWN_BPS;
+    }
+
     // ======================== GMX CALLBACKS ========================
 
-    /// @notice Called by GMX after order execution
     function afterOrderExecution(
-        bytes32 key,
-        bytes calldata,
-        bytes calldata
+        bytes32 key, bytes calldata, bytes calldata
     ) external override onlyGMX {
         uint256 idx = orderToShortIndex[key];
         ShortPosition storage pos = shorts[idx];
 
         if (!pos.active) {
-            // Open order executed → activate position
             pos.active = true;
         } else {
-            // Close order executed → deactivate position
             pos.active = false;
-            emit ShortClosed(idx);
+            emit ShortClosed(idx, pos.shortType);
 
             if (pendingCloseOrders > 0) {
                 pendingCloseOrders--;
@@ -357,35 +675,25 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
                 }
             }
         }
-
         emit GMXOrderCallback(key, true);
     }
 
-    /// @notice Called by GMX if order is cancelled
     function afterOrderCancellation(
-        bytes32 key,
-        bytes calldata,
-        bytes calldata
+        bytes32 key, bytes calldata, bytes calldata
     ) external override onlyGMX {
         uint256 idx = orderToShortIndex[key];
         ShortPosition storage pos = shorts[idx];
-
         if (!pos.active) {
-            // Open was cancelled → clean up
             pos.sizeUsd = 0;
             pos.collateralUsdc = 0;
         } else {
-            // Close was cancelled → still active, decrement pending
             if (pendingCloseOrders > 0) pendingCloseOrders--;
         }
         emit GMXOrderCallback(key, false);
     }
 
-    /// @notice Called by GMX if order is frozen
     function afterOrderFrozen(
-        bytes32 key,
-        bytes calldata,
-        bytes calldata
+        bytes32 key, bytes calldata, bytes calldata
     ) external override onlyGMX {
         emit GMXOrderCallback(key, false);
     }
@@ -413,6 +721,17 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         }
     }
 
+    function _getHealthFactor() internal view returns (uint256) {
+        // Read from AAVE getUserAccountData
+        // For now, compute manually
+        uint256 collateralUsd = (aWbtc.balanceOf(address(this)) * _wbtcPriceUsd()) / WBTC_DECIMALS;
+        uint256 debtUsd = (debtUsdc.balanceOf(address(this)) * USD_DECIMALS) / USDC_DECIMALS;
+        if (debtUsd == 0) return type(uint256).max;
+        // HF = collateral * liquidationThreshold / debt
+        // Simplified: assume 80% liquidation threshold
+        return (collateralUsd * 80 * 1e18) / (debtUsd * 100);
+    }
+
     function _availableWbtc() internal view returns (uint256) {
         uint256 totalWbtc = aWbtc.balanceOf(address(this));
         uint256 debt = debtUsdc.balanceOf(address(this));
@@ -426,34 +745,43 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         return totalWbtc > minWbtc ? totalWbtc - minWbtc : 0;
     }
 
+    function _tvlInUsdc6() internal view returns (uint256) {
+        uint256 tvlWbtc = this.totalAssets();
+        uint256 price = _wbtcPriceUsd();
+        // tvl(8dec) * price(8dec) / 1e10 → 6dec USDC
+        return (tvlWbtc * price) / 1e10;
+    }
+
     // ======================== VIEWS ========================
 
     function _wbtcPriceUsd() internal view returns (uint256) {
-        return aaveOracle.getAssetPrice(address(wbtc)); // 8 decimals
+        return aaveOracle.getAssetPrice(address(wbtc));
     }
 
-    /// @inheritdoc IStrategyOnChain
     function currentPrice() external view override returns (uint256) {
         return _wbtcPriceUsd();
     }
 
-    /// @inheritdoc IStrategyOnChain
-    /// @notice Total assets in WBTC terms = AAVE collateral - debt + GMX PnL + free balances
+    /// @notice Total assets in WBTC terms
     function totalAssets() external view override returns (uint256) {
         uint256 aaveWbtc = aWbtc.balanceOf(address(this));
         uint256 price = _wbtcPriceUsd();
 
-        // Subtract AAVE USDC debt (→ WBTC equivalent)
         uint256 debt = debtUsdc.balanceOf(address(this));
         uint256 debtInWbtc = 0;
         if (price > 0 && debt > 0) {
             debtInWbtc = (debt * USD_DECIMALS * WBTC_DECIMALS) / (USDC_DECIMALS * price);
         }
 
-        // GMX short positions PnL
         int256 gmxPnlWbtc = _gmxPositionValueWbtc(price);
 
-        // Free token balances
+        // Aevo puts value
+        uint256 aevoPutsWbtc = 0;
+        if (address(aevoAdapter) != address(0) && price > 0) {
+            uint256 putsUsdc = aevoAdapter.totalPutValue();
+            aevoPutsWbtc = (putsUsdc * USD_DECIMALS * WBTC_DECIMALS) / (USDC_DECIMALS * price);
+        }
+
         uint256 freeWbtc = wbtc.balanceOf(address(this));
         uint256 freeUsdc = usdc.balanceOf(address(this));
         uint256 freeUsdcInWbtc = 0;
@@ -461,14 +789,6 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
             freeUsdcInWbtc = (freeUsdc * USD_DECIMALS * WBTC_DECIMALS) / (USDC_DECIMALS * price);
         }
 
-        // Aevo puts value (USDC → WBTC)
-        uint256 aevoPutsWbtc = 0;
-        if (address(aevoAdapter) != address(0) && price > 0) {
-            uint256 putsUsdc = aevoAdapter.totalPutValue(); // 6 decimals
-            aevoPutsWbtc = (putsUsdc * USD_DECIMALS * WBTC_DECIMALS) / (USDC_DECIMALS * price);
-        }
-
-        // Sum
         uint256 base = aaveWbtc > debtInWbtc ? aaveWbtc - debtInWbtc : 0;
         uint256 total = base + freeWbtc + freeUsdcInWbtc + aevoPutsWbtc;
 
@@ -482,7 +802,6 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         return total;
     }
 
-    /// @dev Aggregate PnL + collateral value of all active GMX shorts, in WBTC
     function _gmxPositionValueWbtc(uint256 price) internal view returns (int256) {
         int256 totalPnl;
         if (price == 0) return 0;
@@ -491,27 +810,22 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
             if (!shorts[i].active) continue;
 
             IGMXReader.PositionInfo memory info = gmxReader.getPosition(
-                gmxDataStore,
-                shorts[i].gmxPositionKey
+                gmxDataStore, shorts[i].gmxPositionKey
             );
 
-            // PnL: 30-decimal USD → WBTC
             int256 pnlWbtc = (info.unrealizedPnl * int256(WBTC_DECIMALS))
                 / (int256(price) * int256(GMX_DECIMALS / USD_DECIMALS));
             totalPnl += pnlWbtc;
 
-            // Collateral value: USDC → WBTC
             if (info.collateralAmount > 0) {
                 totalPnl += int256(
                     (info.collateralAmount * USD_DECIMALS * WBTC_DECIMALS) / (USDC_DECIMALS * price)
                 );
             }
         }
-
         return totalPnl;
     }
 
-    /// @notice Number of currently active shorts
     function activeShortCount() external view returns (uint256) {
         uint256 count;
         for (uint256 i = 0; i < shorts.length; i++) {
@@ -520,19 +834,27 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         return count;
     }
 
-    /// @notice Total shorts ever created
     function totalShorts() external view returns (uint256) {
         return shorts.length;
     }
 
-    // ======================== RECEIVE ETH ========================
-    // ======================== AEVO ADAPTER MANAGEMENT ========================
+    /// @notice Get current allocation percentages
+    function getAllocation() external view returns (uint256 wbtcPct, uint256 bufferPct, uint256 hedgePct) {
+        return _getAllocationPcts();
+    }
+
+    /// @notice Get current health factor
+    function getHealthFactor() external view returns (uint256) {
+        return _getHealthFactor();
+    }
+
+    // ======================== ADMIN ========================
 
     function setAevoAdapter(AevoAdapter newAdapter) external onlyRole(DEFAULT_ADMIN_ROLE) {
         emit AevoAdapterUpdated(address(aevoAdapter), address(newAdapter));
-        aevoAdapter = newAdapter; // address(0) = disable puts
+        aevoAdapter = newAdapter;
     }
 
     // ======================== RECEIVE ETH ========================
-    receive() external payable {} // GMX execution fee refunds
+    receive() external payable {}
 }

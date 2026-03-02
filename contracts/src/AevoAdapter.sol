@@ -20,10 +20,15 @@ import { IAevoRouter } from "./interfaces/IAevo.sol";
  *   - totalPutValue() for NAV integration in StrategyOnChain.totalAssets()
  *   - Max 3 concurrent paliers, bounded allocation
  *
- * Palier mapping (matches BTSAVE risk tiers):
- *   1 = Deep OTM put (~60% ATH) — catastrophe protection
- *   2 = Mid OTM put  (~85% ATH) — moderate drawdown hedge
- *   3 = Near ATM put (~100% ATH) — tight protection
+ * Palier mapping (optimized strategy):
+ *   1 = Deep OTM put (~60% ATH) — catastrophe protection (0.5% TVL)
+ *   2 = Mid OTM put  (~85% ATH) — moderate drawdown hedge (0.5% TVL)
+ *   Total: 1% TVL in puts
+ *
+ * Reopening conditions (checked by StrategyOnChain.shouldReopenPuts):
+ *   - BTC < -7% ATH OR HF < 2.6
+ *
+ * Roll down: close + reopen at lower strike when profit >= +70%
  */
 contract AevoAdapter is AccessControl {
     using SafeERC20 for IERC20;
@@ -166,19 +171,17 @@ contract AevoAdapter is AccessControl {
     /// @param totalUsdc Total USDC to allocate (split equally across 3 paliers)
     /// @param expiry Shared expiry for all 3 puts
     /// @param premiumLimitPerPut Max premium per put (6 dec USDC)
+    /// @notice Open both puts: P1 (60% ATH) + P2 (85% ATH), split 50/50
     function openAllPuts(
         uint256 totalUsdc,
         uint256 expiry,
         uint256 premiumLimitPerPut
     ) external onlyRole(KEEPER_ROLE) {
         uint256 ath = strategy.currentATH();
-        uint256 perPalier = totalUsdc / 3;
+        uint256 perPalier = totalUsdc / 2; // 2 paliers, not 3
 
-        // Must call openPut externally for each to get proper validation
-        // This is a convenience wrapper — calls internal logic
         _openPutInternal(1, (ath * 60) / 100, perPalier, expiry, premiumLimitPerPut);
         _openPutInternal(2, (ath * 85) / 100, perPalier, expiry, premiumLimitPerPut);
-        _openPutInternal(3, ath, perPalier, expiry, premiumLimitPerPut);
     }
 
     function _openPutInternal(
@@ -259,6 +262,38 @@ contract AevoAdapter is AccessControl {
         pos.active = false;
 
         emit PutClosed(palier, pnl, valueBeforeClose);
+    }
+
+    // ======================== ROLL DOWN ========================
+
+    /// @notice Roll down a put: close at profit, reopen at lower strike (current price level)
+    ///         Called when put is +70% profit — captures gain and re-establishes protection
+    /// @param palier Which palier to roll down (1 or 2)
+    /// @param newStrike New lower strike price (8 decimals)
+    /// @param newExpiry New expiry timestamp
+    /// @param premiumLimit Max premium for new put
+    function rollDown(
+        uint8 palier,
+        uint256 newStrike,
+        uint256 newExpiry,
+        uint256 premiumLimit
+    ) external onlyRole(KEEPER_ROLE) {
+        if (palier == 0 || palier > MAX_PALIERS) revert InvalidPalier(palier);
+        PutPosition storage pos = puts[palier];
+        if (!pos.active) revert PalierNotActive(palier);
+
+        // Read value and close
+        uint256 valueBeforeClose = aevoRouter.getPositionValue(pos.orderId);
+        int256 pnl = aevoRouter.closeOrder(pos.orderId);
+
+        uint256 oldCollateral = pos.collateralUsdc;
+        totalAllocated -= oldCollateral;
+        pos.active = false;
+
+        emit PutClosed(palier, pnl, valueBeforeClose);
+
+        // Reopen at new strike with same allocation
+        _openPutInternal(palier, newStrike, oldCollateral, newExpiry, premiumLimit);
     }
 
     // ======================== CLEANUP EXPIRED ========================
