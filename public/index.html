@@ -3,11 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>BTSAVE v3 — Hybrid ZERO-LIQ + LSM</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<title>BTSAVE — Full On-Chain Arbitrum</title>
 <style>
   :root {
     --bg: #121016; --card: #1a171f; --border: #2a2530;
@@ -23,15 +19,11 @@
   .header-top { display: flex; justify-content: space-between; align-items: flex-start; }
   .header h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
   .header h1 span { background: linear-gradient(135deg, var(--orange), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-  .price-big { font-size: 32px; font-weight: 800; letter-spacing: -1.5px; margin: 4px 0; }
-  .price-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
-  .step-badge { background: linear-gradient(135deg, var(--orange), var(--red)); color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 8px rgba(246,176,107,0.3); }
-  .header-stats { display: flex; gap: 12px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.05); }
-  .header-stat { flex: 1; text-align: center; }
-  .header-stat-value { font-size: 16px; font-weight: 700; }
-  .header-stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-top: 1px; }
-  .chart-wrap { background: var(--card); border-radius: 12px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--border); }
-  .chart-wrap canvas { width: 100% !important; height: 220px !important; }
+  .price-big { font-size: 32px; font-weight: 800; letter-spacing: -1.5px; }
+  .phase-badge { padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .phase-IDLE { background: var(--muted); color: #fff; }
+  .phase-HEDGED { background: linear-gradient(135deg, var(--orange), var(--red)); color: #fff; }
+  .phase-CLOSING { background: linear-gradient(135deg, var(--blue), var(--purple)); color: #fff; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
   .card { background: var(--card); border-radius: 10px; padding: 12px; border: 1px solid var(--border); }
   .card.full { grid-column: 1 / -1; }
@@ -45,15 +37,10 @@
   .blue { color: var(--blue); }
   .section { background: var(--card); border-radius: 10px; padding: 12px; border: 1px solid var(--border); margin-bottom: 12px; }
   .section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin-bottom: 8px; }
-  .grid-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-  .grid-row:last-child { border: none; }
-  .action-dir { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; white-space: nowrap; text-align: center; display: inline-block; }
-  .action-dir.up { background: rgba(110,231,160,0.12); color: var(--green); }
-  .action-dir.down { background: rgba(248,113,113,0.12); color: var(--red); }
-  .grid-col1 { text-align: center; }
-  .grid-col2 { font-weight: 600; font-size: 12px; text-align: center; }
-  .grid-col3 { text-align: center; }
-  .grid-col4 { color: var(--muted); font-size: 11px; text-align: center; }
+  .strat-var { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; border-bottom: 1px solid var(--border); }
+  .strat-var:last-child { border: none; }
+  .strat-var .label { color: var(--muted); }
+  .strat-var .val { font-weight: 700; }
   .hf-bar { height: 6px; border-radius: 3px; background: var(--border); margin-top: 6px; overflow: hidden; }
   .hf-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
   .footer { text-align: center; color: var(--muted); font-size: 10px; padding: 8px 0 20px; }
@@ -66,32 +53,11 @@
   .nav-btn { padding: 3px 14px; border-radius: 20px; font-size: 11px; font-weight: 700; text-decoration: none; border: 1px solid var(--border); color: var(--muted); background: transparent; cursor: pointer; transition: all 0.2s; letter-spacing: 0.5px; }
   .nav-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
   .nav-btn:not(.active):hover { border-color: var(--muted); color: var(--text); }
-  .strat-var { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; border-bottom: 1px solid var(--border); }
-  .strat-var:last-child { border: none; }
-  .strat-var .label { color: var(--muted); }
-  .strat-var .val { font-weight: 700; }
-  .zone-item { padding: 8px 10px; border-radius: 8px; margin-bottom: 4px; font-size: 12px; border: 1px solid transparent; opacity: 0.5; }
-  .zone-item.active { opacity: 1; border-color: var(--accent); background: rgba(246,176,107,0.08); }
-  .zone-item .zone-price { font-weight: 700; }
-  .split-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 8px 0; }
-  .split-bar .seg-wbtc { background: var(--orange); }
-  .split-bar .seg-aave { background: var(--blue); }
-  .split-bar .seg-deribit { background: var(--purple); }
-  .split-legend { display: flex; gap: 12px; justify-content: center; font-size: 10px; }
-  .split-legend span { display: flex; align-items: center; gap: 4px; }
-  .split-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .option-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-  .option-row:last-child { border: none; }
-  .action-badge { display: inline-block; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-  .action-badge.auto { background: linear-gradient(135deg, #10b981, #34d399); color: #fff; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3); }
-  .action-badge.manual { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #fff; box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3); }
-  .action-section { margin-bottom: 16px; }
-  .action-list { margin-left: 8px; }
-  .action-item { padding: 4px 0; font-size: 12px; line-height: 1.4; color: var(--text); }
-  .lsm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-  .lsm-item { text-align: center; }
-  .lsm-value { font-weight: 700; font-size: 14px; }
-  .lsm-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .pos-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .pos-row:last-child { border: none; }
+  .dao-link { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: 600; background: rgba(96,165,250,0.15); color: var(--blue); text-decoration: none; border: 1px solid rgba(96,165,250,0.3); }
+  .dao-link:hover { background: rgba(96,165,250,0.25); }
+  .todo-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; background: rgba(246,176,107,0.2); color: var(--orange); margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -104,8 +70,9 @@ const $ = s => document.querySelector(s);
 const fmt = n => n.toLocaleString('fr-FR');
 const fmtUSD = n => '$' + fmt(Math.round(n));
 const fmtBTC = (n, d=4) => n.toFixed(d) + ' BTC';
-
-let chart = null;
+const arbscan = addr => `https://arbiscan.io/address/${addr}`;
+const shortAddr = a => a.slice(0,6) + '…' + a.slice(-4);
+const isZero = a => a === '0x0000000000000000000000000000000000000000';
 
 async function load() {
   try {
@@ -121,108 +88,79 @@ async function load() {
 
 function render(d) {
   const a = d.aave;
-  const s = d.strategy;
-  const r = d.repartition;
-  const pctFromATH = ((d.price - d.ATH) / d.ATH * 100).toFixed(1);
-  
+  const g = d.gmx;
+  const dao = d.dao;
+  const nav = d.nav;
+
   let hfColor = 'green';
   if (a) {
-    if (a.healthFactor < 1.55) hfColor = 'red';
+    if (a.healthFactor < 1.5) hfColor = 'red';
     else if (a.healthFactor < 2.0) hfColor = 'orange';
   }
-
   const ltvPct = a ? (a.totalDebtUSD / a.totalCollateralUSD * 100).toFixed(1) : '—';
-
-  // Zone thresholds (v3 strategy)
-  const zones = [
-    { id: 'accumulation', label: 'HF ≥ 1.55: Accumulation normale', description: '⚡ auto shorts + ✋ manual borrow/swap', hf: '1.55+' },
-    { id: 'monitor', label: 'HF 1.40-1.55: Monitor renforcé', description: '⚡ auto monitoring + ✋ manual puts review', hf: '1.40-1.55' },
-    { id: 'zone1', label: 'HF < 1.40: STOP nouveaux emprunts', description: 'Protection pure', hf: '<1.40' },
-    { id: 'zone2', label: 'HF 1.25-1.30: Vendre 50% puts + rembourser 25% dette', description: '✋ MANUEL', hf: '1.25-1.30' },
-    { id: 'zone3', label: 'HF 1.15-1.25: Vendre puts restants + rembourser 40% dette', description: '✋ MANUEL', hf: '1.15-1.25' },
-    { id: 'emergency', label: 'HF < 1.15: URGENCE — vendre tout + rembourser max', description: '✋ MANUEL', hf: '<1.15' },
-  ];
 
   $('#app').innerHTML = `
     <div class="header">
       <div class="header-top">
         <div>
-          <img src="logo.svg" alt="BTSAVE" style="height:30px">
+          <img src="logo.svg" alt="BTSAVE" style="height:30px" onerror="this.style.display='none'">
           <div class="nav-toggle">
-            <a href="/" class="nav-btn active">PROD</a>
+            <a href="/" class="nav-btn active">DASHBOARD</a>
             <a href="/simu.html" class="nav-btn">SIMU</a>
           </div>
         </div>
         <div style="text-align:right">
-          <div class="step-badge">Step ${d.currentStep}/19</div>
-          <div style="font-size:9px;color:var(--muted);margin-top:4px">${s.split}</div>
+          <div class="phase-badge phase-${d.phase}">${d.phase}</div>
+          <div style="font-size:9px;color:var(--muted);margin-top:4px">Arbitrum</div>
         </div>
       </div>
-      <div style="display:flex;justify-content:center;align-items:baseline;gap:12px;margin:10px 0 6px">
-        <div class="price-big">${fmtUSD(d.price)}</div>
-        <div style="color:var(--red);font-size:15px;font-weight:700">${pctFromATH}%</div>
-      </div>
-      ${r ? `
-      <div class="split-bar">
-        <div class="seg-wbtc" style="width:${r.wbtcPct}%"></div>
-        <div class="seg-aave" style="width:${r.usdcAavePct}%"></div>
-        <div class="seg-deribit" style="width:${r.usdcDeribitPct}%"></div>
-      </div>
-      <div class="split-legend">
-        <span><span class="dot" style="background:var(--orange)"></span> WBTC ${r.wbtcPct}%</span>
-        <span><span class="dot" style="background:var(--blue)"></span> USDC AAVE ${r.usdcAavePct}%</span>
-        <span><span class="dot" style="background:var(--purple)"></span> USDC Deribit ${r.usdcDeribitPct}%</span>
-      </div>
-      <div style="text-align:center;font-size:10px;color:var(--muted);margin-top:4px">Début de cycle: 79 / 18 / 3</div>
-      ` : ''}
-      <div class="header-stats">
-        <div class="header-stat">
-          <div class="header-stat-value">${fmtUSD(d.ATH)}</div>
-          <div class="header-stat-label">ATH Ratcheté</div>
-        </div>
-        <div class="header-stat">
-          <div class="header-stat-value">${fmtUSD(d.stepSize)}</div>
-          <div class="header-stat-label">Pas (5%)</div>
-        </div>
-        <div class="header-stat">
-          <div class="header-stat-value">${s.wbtcStart}</div>
-          <div class="header-stat-label">WBTC Start</div>
-        </div>
+      <div style="text-align:center;margin:12px 0 6px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">BTC/USD</div>
+        <div class="price-big">${d.price ? fmtUSD(d.price) : '—'}</div>
       </div>
     </div>
 
-    <!-- Strategy Variables -->
-    <div class="section">
-      <h3>⚙️ Paramètres du cycle</h3>
-      <div class="strat-var"><span class="label">Buffer USDC AAVE</span><span class="val">${fmtUSD(s.bufferUsdcAave)}</span></div>
-      <div class="strat-var"><span class="label">USDC Deribit cible</span><span class="val">${fmtUSD(s.usdcDeribitTarget)}</span></div>
-      <div class="strat-var"><span class="label">Emprunt / palier</span><span class="val">${fmtUSD(s.borrowPerStep)}</span></div>
-      <div class="strat-var"><span class="label">Short / palier</span><span class="val">${s.shortPerStep} BTC</span></div>
-    </div>
-
-    ${d.eth ? `
-    <div style="display:flex;justify-content:space-between;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
-      <div style="display:flex;align-items:center;gap:6px">
-        <span style="font-size:14px">⟠</span>
-        <div>
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px">Solde ETH</div>
-          <div style="font-weight:700;font-size:15px">${d.eth.ethBalance.toFixed(4)} ETH</div>
-        </div>
+    <!-- NAV -->
+    ${nav ? `
+    <div class="grid">
+      <div class="card" style="text-align:center">
+        <div class="card-label">Total Assets</div>
+        <div class="card-value green">${fmtUSD(nav.totalAssetsUSD)}</div>
       </div>
-      <div style="text-align:right">
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px">Gas (swap)</div>
-        <div style="font-weight:700;font-size:15px">${d.eth.gasPriceGwei} gwei <span style="color:var(--muted);font-size:12px;font-weight:400">≈ $${d.eth.swapCostUSD.toFixed(2)}</span></div>
+      <div class="card" style="text-align:center">
+        <div class="card-label">Net (Assets - Debt)</div>
+        <div class="card-value">${fmtUSD(nav.netUSD)}</div>
+      </div>
+      <div class="card full" style="text-align:center">
+        <div class="card-label">Prix TPB Token</div>
+        <div class="card-value ${nav.tpbPrice > 0 ? '' : 'orange'}">${nav.tpbPrice > 0 ? '$' + nav.tpbPrice.toFixed(4) : 'TODO — vault non déployé'}</div>
       </div>
     </div>
     ` : ''}
 
-    <div class="chart-wrap"><canvas id="chart"></canvas></div>
-    
+    <!-- Arb gas info -->
+    ${d.arb ? `
+    <div style="display:flex;justify-content:space-between;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:14px">⟠</span>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px">ETH (Arbitrum)</div>
+          <div style="font-weight:700;font-size:15px">${d.arb.ethBalance.toFixed(4)} ETH</div>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.8px">Gas</div>
+        <div style="font-weight:700;font-size:15px">${d.arb.gasPriceGwei} gwei</div>
+      </div>
+    </div>
+    ` : ''}
+
+    <!-- AAVE V3 Arbitrum -->
     ${a ? `
     <div class="section" style="padding:0;overflow:hidden">
       <div style="background:${hfColor === 'green' ? 'rgba(110,231,160,0.18)' : hfColor === 'orange' ? 'rgba(246,176,107,0.25)' : 'rgba(248,113,113,0.25)'};padding:8px 12px;display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;opacity:0.9">🏦 AAVE V3 — Health Factor</span>
-        <span style="font-size:20px;font-weight:800">${a.healthFactor.toFixed(2)}</span>
+        <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;opacity:0.9">🏦 AAVE V3 — Arbitrum</span>
+        <span style="font-size:20px;font-weight:800">HF ${a.healthFactor.toFixed(2)}</span>
       </div>
       <div style="padding:12px">
         <div style="display:flex;gap:12px">
@@ -234,45 +172,31 @@ function render(d) {
                 <div style="font-weight:700;font-size:14px">${fmtBTC(a.wbtcBTC)}</div>
               </div>
             </div>
-            ${a.usdcCol > 100 ? `
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            ${a.usdcCol > 1 ? `
+            <div style="display:flex;align-items:center;gap:6px">
               <span style="font-size:16px">💵</span>
               <div>
                 <div style="font-weight:700;font-size:14px">${fmtUSD(a.usdcCol)} <span class="card-sub">USDC</span></div>
               </div>
             </div>` : ''}
-            ${a.usdtCol > 100 ? `
-            <div style="display:flex;align-items:center;gap:6px">
-              <span style="font-size:16px">💵</span>
-              <div>
-                <div style="font-weight:700;font-size:14px">${fmtUSD(a.usdtCol)} <span class="card-sub">USDT</span></div>
-              </div>
-            </div>` : ''}
             <div style="flex:1"></div>
             <div style="padding-top:6px;border-top:1px solid var(--border)">
-              <div class="card-sub">Total</div>
+              <div class="card-sub">Total Collateral</div>
               <div style="font-weight:700">${fmtUSD(a.totalCollateralUSD)}</div>
             </div>
           </div>
           <div style="width:1px;background:var(--border)"></div>
           <div style="flex:1;display:flex;flex-direction:column">
-            <div class="card-label" style="margin-bottom:8px;color:var(--red)">✦ PASSIF</div>
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-              <span style="font-size:16px">💵</span>
-              <div>
-                <div style="font-weight:700;font-size:14px">${fmtUSD(a.debtUSDT)} <span class="card-sub">USDT</span></div>
-              </div>
-            </div>
-            ${a.totalDebtUSD - a.debtUSDT > 100 ? `
+            <div class="card-label" style="margin-bottom:8px;color:var(--red)">✦ DETTE</div>
             <div style="display:flex;align-items:center;gap:6px">
               <span style="font-size:16px">💵</span>
               <div>
-                <div style="font-weight:700;font-size:14px">${fmtUSD(a.totalDebtUSD - a.debtUSDT)} <span class="card-sub">USDC</span></div>
+                <div style="font-weight:700;font-size:14px">${fmtUSD(a.debtUSDC)} <span class="card-sub">USDC</span></div>
               </div>
-            </div>` : ''}
+            </div>
             <div style="flex:1"></div>
             <div style="padding-top:6px;border-top:1px solid var(--border)">
-              <div class="card-sub">Total</div>
+              <div class="card-sub">Total Debt</div>
               <div style="font-weight:700;color:var(--red)">${fmtUSD(a.totalDebtUSD)}</div>
             </div>
           </div>
@@ -280,419 +204,109 @@ function render(d) {
         <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:11px;color:var(--muted)">
           <span>LTV: ${ltvPct}%</span>
           <span>Net: ${fmtUSD(a.totalCollateralUSD - a.totalDebtUSD)}</span>
-          <span class="orange">Liq: ${fmtUSD(d.price / a.healthFactor * (a.liquidationThreshold / 10000))}</span>
+          <span>Borrow dispo: ${fmtUSD(a.availableBorrowsUSD)}</span>
         </div>
-      </div>
-    </div>
-    
-    ${a.athBreakdown ? `
-    <div class="section">
-      <h3>🎯 Total BTC @ ATH (${fmtUSD(d.ATH)})</h3>
-      <div class="grid" style="margin-bottom:0">
-        <div class="card full" style="border:1px solid rgba(110,231,160,0.25);text-align:center">
-          <div class="card-label">BTC Net @ ATH</div>
-          <div class="card-value green" style="font-size:22px">${fmtBTC(a.athBreakdown.netBtc)}</div>
-          <div class="card-sub">${fmtUSD(a.athBreakdown.netUSD)}</div>
-        </div>
-        <div class="card">
-          <div class="card-label">WBTC actuel</div>
-          <div class="card-value">${fmtBTC(a.athBreakdown.currentWbtc)}</div>
-          <div class="card-sub">start: ${a.athBreakdown.wbtcStart} | accum: +${fmtBTC(a.athBreakdown.accumulated)}</div>
-        </div>
-        <div class="card">
-          <div class="card-label">Buffer USDC → BTC</div>
-          <div class="card-value green">+${fmtBTC(a.athBreakdown.bufferBtc)}</div>
-          <div class="card-sub">${fmtUSD(a.athBreakdown.bufferUSDC)} / ${fmtUSD(d.ATH)}</div>
-        </div>
-        <div class="card">
-          <div class="card-label">Equity Deribit → BTC</div>
-          <div class="card-value green">+${fmtBTC(a.athBreakdown.deribitEquityBtc)}</div>
-          <div class="card-sub">${fmtUSD(a.athBreakdown.deribitEquityUSDC)} USDC</div>
-        </div>
-        <div class="card">
-          <div class="card-label">Remb. dette en BTC</div>
-          <div class="card-value red">−${fmtBTC(a.athBreakdown.debtRepayBtc)}</div>
-          <div class="card-sub">${fmtUSD((a.debtUSDT||0) + (a.debtUSDC||0))} / ${fmtUSD(d.ATH)}</div>
-        </div>
-        <div class="card">
-          <div class="card-label">Perte short @ ATH</div>
-          <div class="card-value red">−${fmtBTC(a.athBreakdown.shortLossBtc)}</div>
-          <div class="card-sub">${fmtUSD(a.athBreakdown.shortLossUSDC)} USDC</div>
-        </div>
-      </div>
-    </div>
-    ` : ''}
-
-    <div class="section">
-      <h3>💰 Funding Rate Gains</h3>
-      <div style="text-align:center;margin-bottom:10px">
-        <div class="card-value ${d.deribit.fundingGains.totalUSDC >= 0 ? 'green' : 'red'}" style="font-size:22px">${d.deribit.fundingGains.totalUSDC >= 0 ? '+' : ''}${d.deribit.fundingGains.totalUSDC.toFixed(4)} USDC</div>
-        <div class="card-sub">${d.deribit.fundingGains.count} settlements • Rate: ${d.deribit.fundingGains.rateAnnualPct}% ann. • Moy: ${d.deribit.fundingGains.avgPerSettlement.toFixed(4)}/j</div>
-        ${d.deribit.fundingGains.resetTimestamp ? `<div class="card-sub" style="margin-top:2px">Depuis: ${new Date(d.deribit.fundingGains.resetTimestamp).toLocaleDateString('fr-FR')}</div>` : ''}
-      </div>
-
-      <!-- Next settlement progress -->
-      <div style="margin:0 auto 10px;max-width:320px">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:4px">
-          <span>Prochain versement</span>
-          <span>${new Date(d.deribit.fundingGains.nextSettlement).toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',timeZone:'UTC'})} UTC</span>
-        </div>
-        <div style="background:rgba(255,255,255,0.06);border-radius:4px;height:8px;overflow:hidden">
-          <div style="background:linear-gradient(90deg,var(--green),rgba(110,231,160,0.6));height:100%;border-radius:4px;width:${d.deribit.fundingGains.progressPct}%;transition:width 0.5s"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:4px">
-          <span style="color:var(--muted)">${d.deribit.fundingGains.progressPct}%</span>
-          <span style="color:var(--green);font-weight:600">Est. ~${d.deribit.fundingGains.estNextPayout > 0 ? '+' + d.deribit.fundingGains.estNextPayout.toFixed(4) : d.deribit.fundingGains.avgPerSettlement.toFixed(4)} USDC</span>
-        </div>
-      </div>
-
-      <div style="text-align:center">
-        <button onclick="resetFunding()" style="background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.3);color:var(--red);padding:6px 16px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">🔄 Reset (cash sorti)</button>
       </div>
     </div>
     ` : `
-    <div class="section"><h3>🏦 AAVE</h3><div class="card-sub">Données indisponibles</div></div>
+    <div class="section"><h3>🏦 AAVE V3</h3><div class="card-sub">Données indisponibles</div></div>
     `}
-    
-    <!-- Deribit Section -->
-    <div class="section">
-      <h3>📊 Deribit</h3>
-      <div class="grid" style="margin-bottom:0">
-        <div class="card" style="text-align:center">
-          <div class="card-label">Equity</div>
-          <div class="card-value">${d.deribit.equity.toFixed(2)}</div>
-          <div class="card-sub">USDC</div>
-        </div>
-        <div class="card" style="text-align:center">
-          <div class="card-label">Disponible</div>
-          <div class="card-value">${d.deribit.available.toFixed(2)}</div>
-          <div class="card-sub">USDC</div>
-        </div>
-      </div>
 
-      ${d.deribit.orders.length ? `
-      <div style="margin-top:10px">
-        <div class="card-label" style="margin-bottom:6px">Ordres ouverts (${d.deribit.orders.length})</div>
-        ${d.deribit.orders.sort((a,b) => (b.trigger||b.price) - (a.trigger||a.price)).map(o => `
-          <div class="grid-row">
-            <span class="grid-col1"><span class="action-dir ${o.direction === 'buy' ? 'up' : 'down'}">${o.direction.toUpperCase()}</span></span>
-            <span class="grid-col2">${o.trigger ? '⚡'+fmt(o.trigger) : fmtUSD(o.price)}</span>
-            <span class="grid-col3" style="color:var(--muted)">${o.amount} BTC</span>
-            <span class="grid-col4">${o.type}</span>
+    <!-- GMX V2 Shorts -->
+    <div class="section">
+      <h3>📉 GMX V2 — Shorts BTC</h3>
+      ${g.positions.length > 0 ? `
+        ${g.positions.map(p => `
+          <div class="pos-row">
+            <div>
+              <div style="font-weight:700">SHORT ${p.sizeBTC.toFixed(4)} BTC</div>
+              <div class="card-sub">Collateral: ${fmtUSD(p.collateralUSD)}</div>
+            </div>
+            <div style="text-align:right">
+              <div class="${p.pnlUSD >= 0 ? 'green' : 'red'}" style="font-weight:700">${p.pnlUSD >= 0 ? '+' : ''}${fmtUSD(p.pnlUSD)}</div>
+              <div class="card-sub">Funding: ${p.fundingUSD >= 0 ? '+' : ''}${fmtUSD(p.fundingUSD)}</div>
+            </div>
           </div>
         `).join('')}
-      </div>` : ''}
-
-      <!-- Futures/Perps Positions -->
-      ${d.deribit.futurePositions.length ? `
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
-        <div class="card-label" style="margin-bottom:6px">📉 Futures / Perps (${d.deribit.futurePositions.length})</div>
-        ${d.deribit.futurePositions.map(p => `
-          <div class="grid-row">
-            <span class="grid-col1"><span class="action-dir ${p.direction === 'buy' ? 'up' : 'down'}">${p.direction.toUpperCase()}</span></span>
-            <span class="grid-col2">${p.size} BTC</span>
-            <span class="grid-col3 ${p.pnl >= 0 ? 'green' : 'red'}">${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)}</span>
-            ${d.role === 'admin' ? `<button onclick="closePosition('${p.instrument}', this)" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:11px;font-weight:700;cursor:pointer">STOP</button>` : `<span class="grid-col4">${p.avgPrice ? fmtUSD(p.avgPrice) : ''}</span>`}
-          </div>
-        `).join('')}
-      </div>` : ''}
-
-      <!-- Options Positions -->
-      ${d.deribit.optionPositions.length ? `
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
-        <div class="card-label" style="margin-bottom:6px">🛡️ Options (${d.deribit.optionPositions.length})</div>
-        ${d.deribit.optionPositions.map(p => `
-          <div class="option-row">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <div>
-                <span style="font-weight:700;font-size:13px">${p.optionType === 'P' ? 'PUT' : 'CALL'} ${fmtUSD(p.strike)}</span>
-                <span style="color:var(--muted);font-size:11px;margin-left:6px">${p.expiry}</span>
-              </div>
-              <div style="text-align:right">
-                <span class="${p.pnl >= 0 ? 'green' : 'red'}" style="font-weight:700">${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)} USDC</span>
-              </div>
-            </div>
-            <div style="display:flex;gap:16px;margin-top:4px;font-size:11px;color:var(--muted)">
-              <span>Taille: ${p.size}</span>
-              <span>Mark: ${p.markPrice.toFixed(4)}</span>
-              <span>Δ ${p.delta.toFixed(3)}</span>
-              <span>θ ${p.theta.toFixed(3)}</span>
-            </div>
-            ${d.role === 'admin' ? `<button onclick="closePosition('${p.instrument}', this)" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:10px;font-weight:700;cursor:pointer;margin-top:4px">CLOSE</button>` : ''}
-          </div>
-        `).join('')}
-      </div>` : ''}
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:12px">
+          <span>Total: ${g.totalSizeBTC.toFixed(4)} BTC</span>
+          <span class="${g.totalPnlUSD >= 0 ? 'green' : 'red'}">PnL: ${g.totalPnlUSD >= 0 ? '+' : ''}${fmtUSD(g.totalPnlUSD)}</span>
+        </div>
+      ` : `
+        <div style="text-align:center;padding:16px;color:var(--muted)">
+          Aucune position active
+          <div style="font-size:10px;margin-top:4px">Phase: ${d.phase}</div>
+        </div>
+      `}
     </div>
 
-    <!-- LSM Module Section -->
-    ${d.lsmStatus ? `
+    <!-- DAO -->
     <div class="section">
-      <h3>🤖 Module LSM</h3>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div>
-          <span style="font-size:14px;font-weight:700;color:${d.lsmStatus.active ? 'var(--green)' : 'var(--red)'}">${d.lsmStatus.active ? 'ACTIVE' : 'KILLED'}</span>
-          <div style="font-size:10px;color:var(--muted);margin-top:2px">${d.lsmStatus.network} • ${d.lsmStatus.moduleAddress.slice(0,6)}...${d.lsmStatus.moduleAddress.slice(-4)}</div>
-        </div>
-        <a href="${d.lsmStatus.grafanaUrl}" target="_blank" style="background:var(--accent);color:var(--bg);padding:4px 12px;border-radius:6px;font-size:11px;font-weight:700;text-decoration:none">Grafana</a>
-      </div>
-      <div class="lsm-grid">
-        <div class="lsm-item">
-          <div class="lsm-value">${d.lsmStatus.botThreshold}/3</div>
-          <div class="lsm-label">Bot threshold</div>
-        </div>
-        <div class="lsm-item">
-          <div class="lsm-value">${d.lsmStatus.maxGasPrice}</div>
-          <div class="lsm-label">Gas max (gwei)</div>
-        </div>
-        <div class="lsm-item">
-          <div class="lsm-value">${d.lsmStatus.minHealthFactor}</div>
-          <div class="lsm-label">HF min</div>
-        </div>
-        <div class="lsm-item">
-          <div class="lsm-value">${d.lsmStatus.dailyTxCount}/${d.lsmStatus.maxDailyTx}</div>
-          <div class="lsm-label">Proposals aujourd'hui</div>
-        </div>
-      </div>
-      <div style="text-align:center;font-size:11px;color:var(--muted);margin-top:8px">
-        Dernière exécution: ${d.lsmStatus.lastExecution ? new Date(d.lsmStatus.lastExecution).toLocaleString('fr-FR') : 'Aucune'}
-      </div>
-    </div>
-    ` : ''}
-
-    <!-- Prochaines Actions -->
-    ${d.nextActions ? `
-    <div class="section" style="border-color:rgba(246,176,107,0.3);background:linear-gradient(135deg,rgba(246,176,107,0.06),var(--card))">
-      <h3>🎯 Prochaines actions <span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0">(${d.nextActions.pctFromATH}% ATH)</span></h3>
+      <h3>🏛️ DAO & Gouvernance</h3>
       
-      ${d.nextActions.status.length ? `
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
-        ${d.nextActions.status.map(s => `<span style="background:rgba(255,255,255,0.05);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--muted)">${s}</span>`).join('')}
-      </div>` : ''}
-      
-      <!-- AUTO Actions -->
-      <div class="action-section">
-        <div class="action-badge auto">⚡ AUTO</div>
-        <div class="action-list">
-          ${d.nextActions.autoActions.map(a => `<div class="action-item">• ${a}</div>`).join('')}
-        </div>
+      <div class="strat-var">
+        <span class="label">Timelock Controller</span>
+        <span class="val">${isZero(dao.timelockAddress) ? '<span class="todo-badge">TODO</span>' : '<a href="' + arbscan(dao.timelockAddress) + '" target="_blank" class="dao-link">' + shortAddr(dao.timelockAddress) + '</a>'}</span>
       </div>
-      
-      <!-- MANUAL Actions -->
-      <div class="action-section">
-        <div class="action-badge manual">✋ MANUEL</div>
-        <div class="action-list">
-          ${d.nextActions.manualActions.map(a => `<div class="action-item">• ${a}</div>`).join('')}
-        </div>
+      <div class="strat-var">
+        <span class="label">Admin</span>
+        <span class="val">${isZero(dao.roles.admin) ? '<span class="todo-badge">TODO</span>' : shortAddr(dao.roles.admin)}</span>
+      </div>
+      <div class="strat-var">
+        <span class="label">Guardian</span>
+        <span class="val">${isZero(dao.roles.guardian) ? '<span class="todo-badge">TODO</span>' : shortAddr(dao.roles.guardian)}</span>
+      </div>
+      <div class="strat-var">
+        <span class="label">Keeper</span>
+        <span class="val">${isZero(dao.roles.keeper) ? '<span class="todo-badge">TODO</span>' : shortAddr(dao.roles.keeper)}</span>
       </div>
 
-      ${d.putRecommendation ? `
-      <div style="margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid ${d.putRecommendation.eligible && d.putRecommendation.needsAction ? 'rgba(110,231,160,0.4)' : 'rgba(122,114,133,0.3)'};background:${d.putRecommendation.eligible && d.putRecommendation.needsAction ? 'rgba(110,231,160,0.06)' : 'rgba(255,255,255,0.02)'}">
-        <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:${d.putRecommendation.eligible && d.putRecommendation.needsAction ? 'var(--green)' : 'var(--muted)'}">
-          🛡️ Prochain Put OTM ${d.putRecommendation.afterSwap ? '<span style="font-size:10px;font-weight:400;color:var(--accent)">(après prochain swap)</span>' : ''}
-        </div>
-        ${d.putRecommendation.eligible ? `
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
-            WBTC extra: ${fmtBTC(d.putRecommendation.wbtcExtra)} (${d.putRecommendation.wbtcExtraPct}%)${d.putRecommendation.afterSwap ? ' → après swap: ' + fmtBTC(d.putRecommendation.wbtcExtraAfterSwap) + ' (' + d.putRecommendation.wbtcExtraPctAfterSwap + '%)' : ''} — Cible: ${d.putRecommendation.targetCoveragePct}% couvert
+      <div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border)">
+        <div class="card-label" style="margin-bottom:6px">NFT Bonus</div>
+        <div style="display:flex;gap:12px">
+          <div style="flex:1;text-align:center">
+            <div style="font-weight:700;font-size:16px">${dao.nftBonus.totalHolders}</div>
+            <div class="card-sub">Holders</div>
           </div>
-          ${d.putRecommendation.needsAction ? `
-            ${!d.putRecommendation.minSizeOk ? `
-              <div style="font-size:11px;color:var(--accent);margin-bottom:4px">⏳ Extra < 0.20 BTC — attendre plus d'accumulation</div>
-            ` : `
-              <div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:4px">
-                ${d.putRecommendation.afterSwap ? '5️⃣' : '🛡️'} ACHETER ${d.putRecommendation.deficit} BTC PUT $${d.putRecommendation.strikePrice.toLocaleString()} (−${d.putRecommendation.strikeOTM}% OTM) exp ${d.putRecommendation.expiry}
-              </div>
-              <div style="font-size:10px;color:var(--muted)">
-                Couverture actuelle: ${d.putRecommendation.currentCoverage} / ${d.putRecommendation.targetSize} BTC
-              </div>
-            `}
-          ` : `
-            <div style="font-size:12px;color:var(--green)">✅ Couverture OK (${d.putRecommendation.currentCoverage} / ${d.putRecommendation.targetSize} BTC)</div>
-          `}
-        ` : `
-          <div style="font-size:11px;color:var(--muted)">${d.putRecommendation.reason}</div>
-        `}
-      </div>
-      ` : ''}
-    </div>
-    ` : ''}
-
-    <!-- Règles de gestion HF v3 -->
-    <div class="section">
-      <h3>📋 Règles de gestion v3 (mise à jour LSM)</h3>
-      ${zones.map(z => `
-        <div class="zone-item ${d.currentZone === z.id ? 'active' : ''}">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start">
-            <div style="flex:1">
-              <div style="font-weight:600;margin-bottom:2px">${z.label}</div>
-              <div style="font-size:10px;color:var(--muted)">${z.description}</div>
-            </div>
-            <span class="zone-price" style="color:var(--accent);font-size:12px;margin-left:8px">HF ${z.hf}</span>
+          <div style="flex:1;text-align:center">
+            <div style="font-weight:700;font-size:16px">${dao.nftBonus.cyclesCompleted}</div>
+            <div class="card-sub">Cycles</div>
           </div>
         </div>
-      `).join('')}
+      </div>
+
+      <div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border)">
+        <div class="card-label" style="margin-bottom:6px">Entry Fee</div>
+        <div style="display:flex;gap:12px">
+          <div style="flex:1;text-align:center">
+            <div style="font-weight:700;font-size:16px">${(dao.fees.baseEntryFeeBps / 100).toFixed(2)}%</div>
+            <div class="card-sub">Base</div>
+          </div>
+          <div style="flex:1;text-align:center">
+            <div style="font-weight:700;font-size:16px;color:var(--green)">${(dao.fees.effectiveFeeBps / 100).toFixed(2)}%</div>
+            <div class="card-sub">Effective (NFT)</div>
+          </div>
+          <div style="flex:1;text-align:center">
+            <div style="font-weight:700;font-size:16px">${dao.fees.nftDiscountPct}%</div>
+            <div class="card-sub">Discount</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px">
+        ${Object.entries(dao.contracts).map(([name, addr]) => 
+          isZero(addr) 
+            ? '<span class="todo-badge">' + name + '</span>'
+            : '<a href="' + arbscan(addr) + '" target="_blank" class="dao-link">' + name + '</a>'
+        ).join('')}
+      </div>
     </div>
-    
+
     <div class="footer">
       <span class="live-dot"></span> Mis à jour: ${new Date().toLocaleString('fr-FR')} — Auto-refresh 60s<br>
-      BTSAVE v3 — Hybrid ZERO-LIQ + LSM Module<br>
-      <span style="font-size: 9px; opacity: 0.7;">Répartition 79/18/3 • HF seuils v3 • AUTO/MANUEL hybrid</span>
+      BTSAVE — Full On-Chain Arbitrum (AAVE V3 + GMX V2)<br>
     </div>
   `;
-  
-  drawChart(d);
-}
-
-function drawChart(d) {
-  const canvas = document.getElementById('chart');
-  if (!canvas || !d.priceHistory || !d.priceHistory.length) return;
-  
-  const candles = d.priceHistory.map(p => ({ x: p.t, o: p.o, h: p.h, l: p.l, c: p.c }));
-  
-  const annotations = {};
-  
-  // Current price
-  annotations.current = {
-    type: 'line', yMin: d.price, yMax: d.price,
-    borderColor: 'rgba(246,176,107,0.8)', borderWidth: 1.5,
-    label: { display: true, content: fmt(Math.round(d.price)), position: 'start', backgroundColor: 'rgba(246,176,107,0.3)', color: '#f6b06b', font: { size: 10, weight: 'bold' } }
-  };
-
-  // Step lines: current step + next step down
-  if (d.currentStepPrice) {
-    annotations.stepCurrent = {
-      type: 'line', yMin: d.currentStepPrice, yMax: d.currentStepPrice,
-      borderColor: 'rgba(196,166,232,0.5)', borderWidth: 1, borderDash: [4,4],
-      label: { display: true, content: 'Step ' + d.currentStep + ' · $' + fmt(d.currentStepPrice), position: 'start', backgroundColor: 'transparent', color: 'rgba(196,166,232,0.8)', font: { size: 9 } }
-    };
-  }
-  if (d.nextStepDown) {
-    annotations.stepDown = {
-      type: 'line', yMin: d.nextStepDown.prix, yMax: d.nextStepDown.prix,
-      borderColor: 'rgba(248,113,113,0.5)', borderWidth: 1, borderDash: [4,4],
-      label: { display: true, content: 'Step ' + d.nextStepDown.step + ' ▼ $' + fmt(d.nextStepDown.prix), position: 'start', backgroundColor: 'transparent', color: 'rgba(248,113,113,0.8)', font: { size: 9 } }
-    };
-  }
-
-  // Chart bounds: fixed $3000 range centered on current price
-  const chartRange = 3000;
-  const chartMin = d.price - chartRange / 2;
-  const chartMax = d.price + chartRange / 2;
-
-  if (chart) chart.destroy();
-  
-  const hasCandlestick = typeof Chart.controllers.candlestick !== 'undefined';
-  
-  if (hasCandlestick) {
-    chart = new Chart(canvas, {
-      type: 'candlestick',
-      data: { datasets: [{ data: candles, color: { up: '#6ee7a0', down: '#f87171', unchanged: '#7a7285' }, borderColor: { up: '#6ee7a0', down: '#f87171', unchanged: '#7a7285' } }] },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { enabled: false }, annotation: { annotations } },
-        scales: {
-          x: { type: 'timeseries', time: { unit: 'hour', displayFormats: { hour: 'dd/MM HH:mm' } }, ticks: { color: '#7a7285', font: { size: 9 }, maxTicksLimit: 6, maxRotation: 0 }, grid: { display: false } },
-          y: { display: true, min: chartMin, max: chartMax, ticks: { color: '#7a7285', font: { size: 9 }, callback: v => fmt(Math.round(v)), maxTicksLimit: 6 }, grid: { color: 'rgba(42,37,48,0.5)' } }
-        }
-      }
-    });
-  } else {
-    const closes = candles.map(c => ({ x: c.x, y: c.c }));
-    chart = new Chart(canvas, {
-      type: 'line',
-      data: { datasets: [{ data: closes, borderColor: '#f6b06b', backgroundColor: 'rgba(246,176,107,0.08)', borderWidth: 1.5, fill: true, pointRadius: 0, tension: 0.1 }] },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, annotation: { annotations }, tooltip: { enabled: false } },
-        scales: {
-          x: { type: 'linear', ticks: { callback: v => { const dt = new Date(v); return dt.getDate() + '/' + (dt.getMonth()+1) + ' ' + dt.getHours() + 'h'; }, color: '#7a7285', font: { size: 9 }, maxTicksLimit: 6, maxRotation: 0 }, grid: { display: false } },
-          y: { display: true, min: chartMin, max: chartMax, ticks: { color: '#7a7285', font: { size: 9 }, callback: v => fmt(Math.round(v)), maxTicksLimit: 6 }, grid: { color: 'rgba(42,37,48,0.5)' } }
-        },
-        interaction: { intersect: false, mode: 'index' }
-      }
-    });
-
-    const candlePlugin = {
-      id: 'candlesticks',
-      afterDatasetDraw(ch) {
-        const ctx = ch.ctx;
-        const ys = ch.scales.y;
-        const xs = ch.scales.x;
-        const barW = Math.max(2, (xs.width / candles.length) * 0.6);
-        candles.forEach(c => {
-          const x = xs.getPixelForValue(c.x);
-          const oY = ys.getPixelForValue(c.o);
-          const cY = ys.getPixelForValue(c.c);
-          const hY = ys.getPixelForValue(c.h);
-          const lY = ys.getPixelForValue(c.l);
-          const bull = c.c >= c.o;
-          const color = bull ? '#6ee7a0' : '#f87171';
-          ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1;
-          ctx.moveTo(x, hY); ctx.lineTo(x, lY); ctx.stroke();
-          const top = Math.min(oY, cY);
-          const h = Math.max(1, Math.abs(oY - cY));
-          ctx.fillStyle = bull ? 'rgba(110,231,160,0.8)' : 'rgba(248,113,113,0.8)';
-          ctx.fillRect(x - barW/2, top, barW, h);
-        });
-      }
-    };
-    chart.config.plugins = [candlePlugin];
-    chart.update();
-  }
-}
-
-let closeConfirm = {};
-let fundingResetConfirm = 0;
-async function resetFunding() {
-  if (!fundingResetConfirm || Date.now() - fundingResetConfirm > 3000) {
-    fundingResetConfirm = Date.now();
-    event.target.textContent = '⚠️ CONFIRMER RESET';
-    event.target.style.background = 'rgba(255,107,107,0.3)';
-    setTimeout(() => { event.target.textContent = '🔄 Reset (cash sorti)'; event.target.style.background = 'rgba(255,107,107,0.15)'; }, 3000);
-    return;
-  }
-  fundingResetConfirm = 0;
-  try {
-    const basePath = location.pathname.replace(/\/+$/, '');
-    const res = await fetch(basePath + '/api/funding-reset', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-    const d = await res.json();
-    if (d.ok) { load(); }
-    else { alert('Erreur: ' + (d.error || 'inconnue')); }
-  } catch(e) { alert('Erreur réseau'); }
-}
-
-async function closePosition(instrument, btn) {
-  if (!closeConfirm[instrument] || Date.now() - closeConfirm[instrument] > 3000) {
-    closeConfirm[instrument] = Date.now();
-    btn.textContent = 'CONFIRMER';
-    btn.style.background = '#dc4444';
-    setTimeout(() => { if (btn.textContent === 'CONFIRMER') { btn.textContent = btn.dataset.origText || 'STOP'; btn.style.background = 'var(--red)'; } }, 3000);
-    return;
-  }
-  closeConfirm[instrument] = 0;
-  btn.textContent = '...';
-  btn.disabled = true;
-  try {
-    const basePath = location.pathname.replace(/\/+$/, '');
-    const res = await fetch(basePath + '/api/close-position', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ instrument })
-    });
-    const d = await res.json();
-    if (d.ok) {
-      btn.textContent = '✓';
-      btn.style.background = 'var(--green)';
-      setTimeout(load, 1500);
-    } else {
-      btn.textContent = d.error || 'ERREUR';
-      btn.style.background = 'var(--orange)';
-      setTimeout(() => { btn.textContent = 'STOP'; btn.style.background = 'var(--red)'; btn.disabled = false; }, 3000);
-    }
-  } catch (e) {
-    btn.textContent = 'ERREUR';
-    btn.style.background = 'var(--orange)';
-    setTimeout(() => { btn.textContent = 'STOP'; btn.style.background = 'var(--red)'; btn.disabled = false; }, 3000);
-  }
 }
 
 load();

@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IStrategyOnChain } from "./interfaces/IStrategyOnChain.sol";
 import { IAavePool, IAaveOracle, IAToken, IVariableDebtToken } from "./interfaces/IAaveV3.sol";
 import { IGMXExchangeRouter, IGMXReader, IOrderCallbackReceiver } from "./interfaces/IGMXV2.sol";
+import { AevoAdapter } from "./AevoAdapter.sol";
 
 /**
  * @title StrategyOnChain — Full On-Chain Arbitrum (V1)
@@ -18,7 +19,8 @@ import { IGMXExchangeRouter, IGMXReader, IOrderCallbackReceiver } from "./interf
  *   - WBTC supplied to AAVE as collateral
  *   - USDC borrowed from AAVE → used as GMX short collateral
  *   - Short BTC-PERP opened on GMX V2 as hedge
- *   - On new ATH → close all shorts (async via keeper), enter CLOSING phase
+ *   - OTM puts via AevoAdapter for additional downside protection
+ *   - On new ATH → close all shorts (async via keeper) + close all puts, enter CLOSING phase
  *
  * State machine:
  *   IDLE → HEDGED (shorts open) → CLOSING (close orders pending) → IDLE
@@ -57,6 +59,9 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     IAToken public immutable aWbtc;
     IVariableDebtToken public immutable debtUsdc;
 
+    // ======================== AEVO (PUTS) ========================
+    AevoAdapter public aevoAdapter;
+
     // ======================== CONSTANTS ========================
     uint256 public constant MAX_SHORT_SIZE_BPS  = 500;   // max 5% TVL per single short
     uint256 public constant MAX_ATH_DELTA_BPS   = 1000;  // max 10% ATH jump per update
@@ -88,6 +93,7 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     event DepositedToStrategy(uint256 amount);
     event WithdrawnFromStrategy(uint256 amount, address to);
     event DebtRepaid(uint256 amount);
+    event AevoAdapterUpdated(address indexed oldAdapter, address indexed newAdapter);
 
     // ======================== ERRORS ========================
     error OnlyVault();
@@ -272,6 +278,11 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
         pendingCloseOrders = count;
         phase = Phase.CLOSING;
         emit PhaseChanged(Phase.HEDGED, Phase.CLOSING);
+
+        // Close all Aevo puts on ATH reset
+        if (address(aevoAdapter) != address(0)) {
+            try aevoAdapter.closeAllPuts() {} catch {}
+        }
     }
 
     /// @notice Keeper closes one short at a time (each needs ETH for GMX execution fee)
@@ -450,9 +461,16 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
             freeUsdcInWbtc = (freeUsdc * USD_DECIMALS * WBTC_DECIMALS) / (USDC_DECIMALS * price);
         }
 
+        // Aevo puts value (USDC → WBTC)
+        uint256 aevoPutsWbtc = 0;
+        if (address(aevoAdapter) != address(0) && price > 0) {
+            uint256 putsUsdc = aevoAdapter.totalPutValue(); // 6 decimals
+            aevoPutsWbtc = (putsUsdc * USD_DECIMALS * WBTC_DECIMALS) / (USDC_DECIMALS * price);
+        }
+
         // Sum
         uint256 base = aaveWbtc > debtInWbtc ? aaveWbtc - debtInWbtc : 0;
-        uint256 total = base + freeWbtc + freeUsdcInWbtc;
+        uint256 total = base + freeWbtc + freeUsdcInWbtc + aevoPutsWbtc;
 
         if (gmxPnlWbtc >= 0) {
             total += uint256(gmxPnlWbtc);
@@ -505,6 +523,14 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     /// @notice Total shorts ever created
     function totalShorts() external view returns (uint256) {
         return shorts.length;
+    }
+
+    // ======================== RECEIVE ETH ========================
+    // ======================== AEVO ADAPTER MANAGEMENT ========================
+
+    function setAevoAdapter(AevoAdapter newAdapter) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        emit AevoAdapterUpdated(address(aevoAdapter), address(newAdapter));
+        aevoAdapter = newAdapter; // address(0) = disable puts
     }
 
     // ======================== RECEIVE ETH ========================
