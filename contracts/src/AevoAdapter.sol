@@ -140,8 +140,7 @@ contract AevoAdapter is AccessControl {
         uint256 effectivePremium = premiumLimit > 0 ? premiumLimit : defaultPremiumLimitUsdc;
         if (effectivePremium == 0) revert ZeroPremiumLimit();
 
-        // Transfer USDC and open order
-        usdc.safeTransferFrom(msg.sender, address(this), amountUsdc);
+        // C9: Harmonized — caller must transfer USDC to adapter before calling (same as openAllPuts)
         usdc.forceApprove(address(aevoRouter), amountUsdc);
 
         bytes32 orderId = aevoRouter.openOrder(

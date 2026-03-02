@@ -790,6 +790,16 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
             pos.active = false;
             emit ShortClosed(idx, pos.shortType);
 
+            // C4: Compact shorts array — swap with last and pop
+            uint256 lastIdx = shorts.length - 1;
+            if (idx != lastIdx) {
+                shorts[idx] = shorts[lastIdx];
+                // Update orderToShortIndex for the moved entry
+                orderToShortIndex[shorts[idx].gmxPositionKey] = idx;
+            }
+            shorts.pop();
+            delete orderToShortIndex[key];
+
             if (pendingCloseOrders > 0) {
                 pendingCloseOrders--;
                 if (pendingCloseOrders == 0 && phase == Phase.CLOSING) {
@@ -846,14 +856,9 @@ contract StrategyOnChain is IStrategyOnChain, AccessControl, IOrderCallbackRecei
     }
 
     function _getHealthFactor() internal view returns (uint256) {
-        // Read from AAVE getUserAccountData
-        // For now, compute manually
-        uint256 collateralUsd = (aWbtc.balanceOf(address(this)) * _wbtcPriceUsd()) / WBTC_DECIMALS;
-        uint256 debtUsd = (debtUsdc.balanceOf(address(this)) * USD_DECIMALS) / USDC_DECIMALS;
-        if (debtUsd == 0) return type(uint256).max;
-        // HF = collateral * liquidationThreshold / debt
-        // Simplified: assume 80% liquidation threshold
-        return (collateralUsd * 80 * 1e18) / (debtUsd * 100);
+        // C7: Use real AAVE health factor instead of manual calculation
+        (,,,,, uint256 hf) = aavePool.getUserAccountData(address(this));
+        return hf; // AAVE returns HF with 18 decimals (1e18 = 1.0)
     }
 
     function _availableWbtc() internal view returns (uint256) {

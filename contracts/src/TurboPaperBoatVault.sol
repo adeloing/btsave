@@ -44,6 +44,7 @@ contract TurboPaperBoatVault is ERC4626, ReentrancyGuard, AccessControl {
     mapping(address => uint256) public userDepositTime;
 
     // ======================== EVENTS ========================
+    event EmergencyWithdraw(address indexed token, address indexed to, uint256 amount);
     event Paused(address indexed by);
     event Unpaused(address indexed by);
     event ExitFeeCharged(address indexed user, uint256 assets, uint256 feeAmount, uint256 holdingDays, bool inDrawdown);
@@ -263,6 +264,29 @@ contract TurboPaperBoatVault is ERC4626, ReentrancyGuard, AccessControl {
     function setNFTBonus(NFTBonus newNFTBonus) external onlyRole(DEFAULT_ADMIN_ROLE) {
         emit NFTBonusUpdated(address(nftBonus), address(newNFTBonus));
         nftBonus = newNFTBonus; // address(0) allowed = disables bonus
+    }
+
+    // ======================== C1: EXIT FEE BYPASS PREVENTION ========================
+
+    /// @dev Reset deposit timer on transfers to prevent exit fee bypass
+    function _update(address from, address to, uint256 value) internal override(ERC20) {
+        super._update(from, to, value);
+        if (from != address(0) && to != address(0) && value > 0) {
+            userDepositTime[to] = block.timestamp;
+        }
+    }
+
+    // ======================== C14: EMERGENCY WITHDRAW ========================
+
+    function emergencyWithdraw(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (to == address(0)) revert ZeroAddress();
+        IERC20(token).safeTransfer(to, amount);
+        emit EmergencyWithdraw(token, to, amount);
+    }
+
+    function emergencyWithdrawFromStrategy(uint256 assets, address to) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (to == address(0)) revert ZeroAddress();
+        strategy.withdraw(assets, to);
     }
 
     // ======================== VIEW ========================
