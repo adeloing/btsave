@@ -10,9 +10,10 @@ const PORT = 3001;
 
 // === AUTH CONFIG ===
 const SESSION_SECRET = 'btsave-kei-' + crypto.randomBytes(8).toString('hex');
+const fs = require('fs');
 const USERS = {
-  xou: { hash: process.env.DASH_XOU_HASH || crypto.createHash('sha256').update(process.env.DASH_XOU_PWD || 'changeme').digest('hex'), role: 'admin' },
-  mael: { hash: process.env.DASH_MAEL_HASH || crypto.createHash('sha256').update(process.env.DASH_MAEL_PWD || 'changeme').digest('hex'), role: 'readonly' }
+  xou: { hash: process.env.DASH_XOU_HASH || crypto.createHash('sha256').update(process.env.DASH_XOU_PWD || 'changeme').digest('hex'), role: 'admin', forcePasswordChange: true },
+  mael: { hash: process.env.DASH_MAEL_HASH || crypto.createHash('sha256').update(process.env.DASH_MAEL_PWD || 'changeme').digest('hex'), role: 'readonly', forcePasswordChange: true }
 };
 
 app.use(session({
@@ -36,10 +37,38 @@ app.post('/auth/login', (req, res) => {
   if (USERS[username] && USERS[username].hash === hash) {
     req.session.user = username;
     req.session.role = USERS[username].role;
-    res.redirect(base + '/');
+    if (USERS[username].forcePasswordChange) {
+      res.redirect(base + '/change-password.html');
+    } else {
+      res.redirect(base + '/');
+    }
   } else {
     res.redirect(base + '/login.html?error=1');
   }
+});
+
+app.post('/auth/change-password', (req, res) => {
+  const base = getBasePath(req);
+  const user = req.session?.user;
+  if (!user || !USERS[user]) return res.redirect(base + '/login.html');
+  const { current, newpwd, confirm } = req.body;
+  const currentHash = crypto.createHash('sha256').update(current || '').digest('hex');
+  if (currentHash !== USERS[user].hash) return res.redirect(base + '/change-password.html?error=wrong');
+  if (!newpwd || newpwd.length < 8) return res.redirect(base + '/change-password.html?error=short');
+  if (newpwd !== confirm) return res.redirect(base + '/change-password.html?error=mismatch');
+  const newHash = crypto.createHash('sha256').update(newpwd).digest('hex');
+  USERS[user].hash = newHash;
+  USERS[user].forcePasswordChange = false;
+  // Persist new hash to .env
+  const envPath = path.join(__dirname, '.env');
+  let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+  const envKey = user === 'xou' ? 'DASH_XOU_HASH' : 'DASH_MAEL_HASH';
+  const pwdKey = user === 'xou' ? 'DASH_XOU_PWD' : 'DASH_MAEL_PWD';
+  // Remove old PWD line and old HASH line
+  envContent = envContent.split('\n').filter(l => !l.startsWith(pwdKey + '=') && !l.startsWith(envKey + '=')).join('\n');
+  envContent = envContent.trimEnd() + '\n' + envKey + '=' + newHash + '\n';
+  fs.writeFileSync(envPath, envContent);
+  res.redirect(base + '/');
 });
 
 app.get('/auth/logout', (req, res) => {
@@ -48,8 +77,14 @@ app.get('/auth/logout', (req, res) => {
 });
 
 function requireAuth(req, res, next) {
-  if (req.path === '/login.html' || req.path.startsWith('/auth/') || req.path === '/logo.svg') return next();
-  if (req.session?.user) return next();
+  if (req.path === '/login.html' || req.path === '/change-password.html' || req.path.startsWith('/auth/') || req.path === '/logo.svg') return next();
+  if (req.session?.user) {
+    if (USERS[req.session.user]?.forcePasswordChange && req.path !== '/change-password.html') {
+      const base = getBasePath(req);
+      return res.redirect(base + '/change-password.html');
+    }
+    return next();
+  }
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Not authenticated' });
   const base = getBasePath(req);
   res.redirect(base + '/login.html');
