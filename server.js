@@ -74,6 +74,9 @@ const DEBT_USDC = '0xFCCf3cAbbe80101232d343252614b6A3eE81C989'; // variableDebtA
 const GMX_READER = '0x0000000000000000000000000000000000000000'; // TODO: GMX V2 Reader contract
 const GMX_DATASTORE = '0x0000000000000000000000000000000000000000'; // TODO: GMX V2 DataStore
 
+// Aevo Adapter (puts)
+const AEVO_ADAPTER = '0x0000000000000000000000000000000000000000'; // TODO: deploy
+
 // Strategy / Vault / DAO (TODO: deploy these)
 const STRATEGY_CONTRACT = '0x0000000000000000000000000000000000000000'; // TODO
 const VAULT_CONTRACT = '0x0000000000000000000000000000000000000000'; // TODO
@@ -183,6 +186,20 @@ async function fetchGMXPositions() {
   };
 }
 
+// === Aevo Puts (placeholder — needs deployed AevoAdapter) ===
+async function fetchAevoPositions() {
+  // TODO: Read from deployed AevoAdapter contract
+  // AevoAdapter.getPut(1), getPut(2), getPut(3) + totalPutValue()
+  // For now return placeholder
+  return {
+    puts: [], // { palier, strike, collateralUSDC, expiry, currentValueUSDC, active }
+    totalValueUSD: 0,
+    totalAllocatedUSD: 0,
+    activePutCount: 0,
+    contractAddress: AEVO_ADAPTER,
+  };
+}
+
 // === Strategy Phase ===
 function getStrategyPhase(gmxPositions, aave) {
   // TODO: Read from strategy contract when deployed
@@ -219,6 +236,7 @@ async function fetchDAOInfo() {
       strategy: STRATEGY_CONTRACT,
       timelock: TIMELOCK_CONTROLLER,
       nftBonus: NFT_BONUS_CONTRACT,
+      aevoAdapter: AEVO_ADAPTER,
     },
   };
 }
@@ -252,10 +270,11 @@ process.on('unhandledRejection', (err) => { console.error('UNHANDLED:', err.mess
 app.use(express.static('public'));
 
 async function fetchAllData() {
-  const [btcPrice, aave, gmx, dao, arbInfo] = await Promise.all([
+  const [btcPrice, aave, gmx, aevo, dao, arbInfo] = await Promise.all([
     fetchBTCPrice(),
     fetchAAVE(),
     fetchGMXPositions(),
+    fetchAevoPositions(),
     fetchDAOInfo(),
     fetchArbInfo(),
   ]);
@@ -306,6 +325,7 @@ async function fetchAllData() {
       totalPnlUSD: gmx.totalPnlUSD,
       totalFundingUSD: gmx.totalFundingUSD,
     },
+    aevo,
     dao,
     nav,
     arb: arbInfo,
