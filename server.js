@@ -227,9 +227,17 @@ async function fetchDAOInfo() {
       contractAddress: NFT_BONUS_CONTRACT,
     },
     fees: {
-      baseEntryFeeBps: 50, // TODO: read from vault
-      effectiveFeeBps: 50, // TODO: compute with NFT discount
+      baseEntryFeeBps: 200, // 2% base (5% near ATH)
+      athEntryFeeBps: 500,  // 5% when price > 95% ATH
+      effectiveFeeBps: 200, // TODO: compute with NFT discount from vault
       nftDiscountPct: 0,
+      exitFeeSchedule: [
+        { days: '<7', feeBps: 200, label: '2.0%' },
+        { days: '7-29', feeBps: 100, label: '1.0%' },
+        { days: '30-89', feeBps: 50, label: '0.5%' },
+        { days: '≥90', feeBps: 0, label: '0%' },
+      ],
+      drawdownBonusBps: 100, // +1% if BTC < 90% ATH
     },
     contracts: {
       vault: VAULT_CONTRACT,
@@ -303,10 +311,18 @@ async function fetchAllData() {
   else if (hf >= 1.3) currentZone = 'warning';
   else currentZone = 'danger';
 
+  // Operational metrics
+  const ath = 0; // TODO: read from strategy.currentATH()
+  const drawdownPct = ath > 0 && price > 0 ? ((ath - price) / ath * 100) : 0;
+  const inDrawdown = ath > 0 && price < ath * 0.9;
+
   return {
     price,
     phase,
     currentZone,
+    ath,
+    drawdownPct: +drawdownPct.toFixed(2),
+    inDrawdown,
     aave: aave ? {
       wbtcBTC: +aave.wbtcBTC.toFixed(8),
       usdcCol: +aave.usdcCol.toFixed(2),

@@ -1,150 +1,134 @@
 # ✅ Documentation Utilisateur Officielle – Turbo Paper Boat (TPB)
 
-> Version 1.0 – 28 février 2026
+> Version 2.0 – 2 mars 2026
 > Projet open-source : https://github.com/adeloing/btsave
 
 ---
 
 ## 1. Qu'est-ce que Turbo Paper Boat ?
 
-**Turbo Paper Boat (TPB)** est le produit phare de **BTSAVE** — un token vault d'accumulation BTC agressive et zéro-liquidation sur Ethereum L1. Il transforme chaque baisse de prix du Bitcoin en gain net de BTC tout en protégeant strictement le capital grâce à :
+**Turbo Paper Boat (TPB)** est le produit phare de **BTSAVE** — un vault d'accumulation BTC agressive et zéro-liquidation, entièrement on-chain sur **Arbitrum**. Il transforme chaque baisse de prix du Bitcoin en gain net de BTC grâce à :
 
-- **AAVE V3** (collateral WBTC + buffer USDC)
-- **Short BTC-PERP sur Deribit** (carry contango)
-- **Puts OTM dynamiques** (protection financée par le carry)
+- **AAVE V3 Arbitrum** (collateral WBTC + buffer USDC)
+- **GMX V2** (shorts BTC split: profit-taking + insurance)
+- **Aevo** (puts OTM: protection catastrophe + drawdown modéré)
+- **Camelot DEX** (swaps USDC ↔ WBTC pour rebalancing)
 
-**Cycle complet** : le vault ne reset que lors d'un nouveau ATH Bitcoin ratcheté. À chaque reset, il rembourse 100 % de la dette USDC en vendant le minimum strict de WBTC accumulé pendant le cycle. Tout le reste est conservé comme gain net permanent.
-
-**Objectif** : maximiser l'exposition BTC long-term tout en minimisant les risques de liquidation.
-
-**BTSAVE** est l'entreprise qui conçoit et opère la stratégie. **Turbo Paper Boat (TPB)** est le produit — le token que vous détenez.
+**Cycle complet** : le vault ne reset que lors d'un nouveau ATH Bitcoin ratcheté. À chaque reset, il rembourse 100 % de la dette USDC. Tout le WBTC restant est du gain net permanent.
 
 ---
 
 ## 2. Le Token TPB (Turbo Paper Boat)
 
-TPB est le token de receipt et de participation du vault de BTSAVE (standard ERC-4626). Il représente votre part proportionnelle des actifs du vault (WBTC + valeur de la stratégie).
+TPB est le token de participation du vault BTSAVE (standard ERC-4626). Il représente votre part proportionnelle des actifs du vault.
 
 **Caractéristiques clés** :
 
-- **Totalement transferable** — vous pouvez le vendre, le transférer ou le trader sur un DEX dès le mint (comme nos NFTs)
-- **NAV-based** (Net Asset Value) — protège automatiquement les early users contre toute dilution
-- **Satoshi-pegged en esprit** — 1 WBTC ≈ 100 000 000 TPB à l'entrée (mais ajusté par NAV ensuite)
-- **Redeemable** à tout moment contre du WBTC (`previewRedeem()` visible)
+- **Totalement transférable** — tradable sur DEX dès le mint
+- **NAV-based** — protège automatiquement les early users contre toute dilution
+- **Entry fee** : 2% base (5% near ATH), réduit par NFTBonus (jusqu'à ~44% du fee de base)
+- **Exit fee progressif** : 2% (<7j) → 1% (<30j) → 0.5% (<90j) → 0% (≥90j), +1% si drawdown >10%
+- **Redeemable** à tout moment (exit fee applicable)
 
 ---
 
-## 3. Comment fonctionne le mint et le redeem ?
+## 3. Comment fonctionne le dépôt et le retrait ?
 
-### Dépôt (uniquement WBTC accepté)
+### Dépôt (uniquement WBTC)
 
-- **Premier dépôt** : 1:1 (1 WBTC = 1e8 TPB)
-- **Dépôts suivants** : `shares = (wbtcAmount × totalSupplyTPB) / totalAssets`
-
-→ Vous recevez moins de TPB si la valeur du vault a déjà augmenté grâce à la stratégie (**anti-dilution totale**)
+1. Entry fee déduit automatiquement (envoyé au treasury)
+2. WBTC net envoyé à la stratégie (supply AAVE V3)
+3. TPB mintés selon la NAV
 
 ```
-totalAssets = WBTC liquide dans le vault + safeWBTC
+shares = previewDeposit(wbtcAmount)  // fee déjà déduit
 ```
 
-`safeWBTC` = valeur réelle déployée dans la stratégie, mise à jour par le keeper à chaque gain.
+### Retrait
 
-### Fin de cycle (nouvel ATH)
+1. TPB brûlés
+2. WBTC retiré de la stratégie (withdraw AAVE V3)
+3. Exit fee appliqué selon durée de holding + conditions marché
+4. WBTC net envoyé au receiver
 
-1. La stratégie réalise ses profits (Deribit + accumulation)
-2. Le keeper met à jour `safeWBTC`
-3. Votre part de performance est automatiquement reflétée dans la NAV → **votre TPB vaut plus de WBTC**
+```
+assets = previewWithdraw(wbtcAmount)  // ou previewRedeem(shares)
+```
 
-### Redeem
+### Exit Fees Détaillés
 
-- À tout moment via `redeem()` ou `previewRedeem()`
-- Vous voyez exactement combien de WBTC vous récupérerez avant de confirmer
-- Le vault brûle vos TPB et vous envoie le WBTC correspondant (swap automatique si besoin)
+| Durée holding | Fee de base | + Bonus drawdown* |
+|---------------|------------|-------------------|
+| < 7 jours | 2.0% | +1.0% |
+| 7-29 jours | 1.0% | +1.0% |
+| 30-89 jours | 0.5% | +1.0% |
+| ≥ 90 jours | **0%** | — |
 
-> ✅ **Test anti-dilution validé** : Alice (early) ne perd jamais de part quand Bob (late) dépose après une performance positive.
-
----
-
-## 4. Stratégie technique (inchangée depuis le 18/02/2026)
-
-- **Allocation initiale** : 79 % aEthWBTC + 18 % buffer aEthUSDC + 3 % marge Deribit
-- **À chaque palier −5 % depuis l'ATH** : borrow USDC → swap → plus de aEthWBTC + short PERP
-- **Protection HF stricte** (jamais de liquidation)
-- **Puts OTM** auto-achetés sur l'excédent WBTC (financés par le carry)
-- **Reset uniquement à nouveau ATH** : clôture shorts → profits bonus → remboursement dette minimal → rebalance 79/18/3
-
-Tout est automatisé via keeper + bots, avec alertes Telegram et dashboard.
+*Le bonus drawdown s'applique quand BTC < 90% de l'ATH (drawdown > 10%)
 
 ---
 
-## 5. Risques importants (à lire attentivement)
+## 4. Stratégie technique
 
-⚠️ **Perte totale possible** : même avec une stratégie zéro-liquidation théorique, un bug de smart contract, un hack de protocole (AAVE, Deribit, oracle), un événement extrême ou une erreur humaine peut entraîner une perte partielle ou totale.
+- **Allocation** : 82% WBTC (AAVE collateral) + 15% USDC buffer + 3% hedging (2% GMX + 1% Aevo)
+- **GMX V2 shorts** : split en profit-taking (close par paliers +12/25/40%) et insurance (close sur recovery)
+- **Aevo puts** : P1 à 60% ATH + P2 à 85% ATH, reopen si BTC <-7% ATH ou HF < 2.6
+- **Cash flow** : priorité debt repay si HF bas, sinon accumulate WBTC via Camelot
+- **Rebalancing** : automatique à ±3% de drift ou tous les 14 jours
+- **Reset ATH** : clôture tout → repay dette → IDLE → nouveau cycle
 
-⚠️ **Volatilité extrême** : le Bitcoin peut chuter de plus de 50 % rapidement ; même si le vault est conçu pour accumuler, la valeur de vos TPB peut baisser fortement en cours de cycle.
+---
 
-⚠️ **Risques DeFi** : smart contract risk, risque de contrepartie Deribit, frais de gas, slippage sur swaps.
+## 5. Risques importants
 
-⚠️ **Risques réglementaires** : les produits dérivés, le lending et les vaults DeFi peuvent être soumis à des réglementations changeantes selon votre juridiction (KYC, taxes, interdictions locales).
+⚠️ **Perte totale possible** : bug smart contract, hack de protocole (AAVE, GMX, Aevo), événement extrême.
 
-⚠️ **Risque de liquidité** : en cas de rush de redemption massif, le vault peut temporairement manquer de WBTC liquide (même si un buffer est maintenu).
+⚠️ **Volatilité extrême** : le Bitcoin peut chuter >50% rapidement.
+
+⚠️ **Risques DeFi** : smart contract risk, slippage, oracle manipulation.
+
+⚠️ **Risques réglementaires** : évolution MiCA, taxes, interdictions locales.
+
+⚠️ **Risque de liquidité** : si la stratégie a des positions ouvertes, le WBTC disponible peut être limité.
 
 ⚠️ **Pas de garantie** : aucun rendement minimum, aucun capital garanti.
 
 ---
 
-## 6. Disclaimers Légaux & Mentions Légales Obligatoires
+## 6. Disclaimers Légaux
 
 **CECI N'EST PAS UN CONSEIL FINANCIER, D'INVESTISSEMENT OU FISCAL.**
 
-BTSAVE et le token Turbo Paper Boat (TPB) sont fournis à titre informatif et éducatif uniquement. Aucune personne ou entité liée au projet (développeurs, contributeurs, opérateurs du keeper, communauté) ne vous donne de conseil d'investissement.
+BTSAVE et le token TPB sont fournis à titre informatif et éducatif uniquement.
 
-**Aucune garantie de performance.** Les performances passées (simulateur ou cycles précédents) ne préjugent en rien des résultats futurs. Vous pouvez perdre 100 % de votre apport.
+**Aucune garantie de performance.** Vous pouvez perdre 100% de votre apport.
 
-**Responsabilité limitée.** En utilisant le vault, vous acceptez que :
+**Responsabilité limitée.** Vous êtes seul responsable de vos décisions et pertes.
 
-- Vous êtes seul responsable de vos décisions et de vos pertes.
-- Le projet décline toute responsabilité pour tout dommage direct, indirect, incident ou consécutif.
-- Vous avez effectué votre propre due diligence technique, financière et juridique.
-- Vous comprenez les risques inhérents à la blockchain, à Ethereum, à AAVE, à Deribit et aux stratégies de lending/hedging.
+**Pas une offre de titres.** TPB est un token utilitaire ERC-4626 open-source.
 
-**Pas une offre de titres.** TPB n'est pas une security, une action, une obligation ni un produit d'investissement réglementé. Il s'agit d'un token utilitaire représentant une part d'un vault DeFi open-source.
+**Taxes.** Vous êtes seul responsable de déclarer et payer les taxes applicables.
 
-**Taxes.** Vous êtes seul responsable de déclarer et payer les taxes applicables dans votre juridiction sur les gains, les dépôts et les redemptions.
+**Âge et éligibilité.** ≥18 ans, légalement autorisé dans votre juridiction.
 
-**Âge et éligibilité.** Vous devez avoir au moins 18 ans et être légalement autorisé à utiliser ces protocoles dans votre pays de résidence.
-
-**Audit & Sécurité.** Les contrats sont en cours de tests intensifs sur Sepolia (36/36 tests passés dont anti-dilution). Un audit professionnel sera publié avant mainnet. Utilisez à vos risques et périls.
-
-**Modification.** Le projet se réserve le droit de faire évoluer la stratégie, les paramètres ou le code sans préavis, dans la mesure où cela reste conforme à l'esprit zéro-liquidation et accumulation BTC.
-
-> **En utilisant BTSAVE ou en détenant du TPB, vous acceptez pleinement ces termes. Si vous n'êtes pas d'accord, n'utilisez pas le protocole.**
+> **En utilisant BTSAVE ou en détenant du TPB, vous acceptez pleinement ces termes.**
 
 ---
 
 ## 7. Comment commencer ?
 
-1. Connectez votre wallet (MetaMask, etc.) sur le site officiel (à venir).
-2. Déposez uniquement du WBTC (Ethereum mainnet).
-3. Recevez vos TPB instantanément.
-4. Suivez votre position sur le dashboard + Telegram bot @BTSave\_bot.
-5. Redeem quand vous voulez via l'interface.
+1. Connectez votre wallet sur Arbitrum
+2. Approuvez WBTC pour le vault
+3. Déposez du WBTC → recevez TPB
+4. Suivez votre position sur le dashboard
+5. Retirez quand vous voulez (exit fee selon durée)
 
 **Ressources** :
 
-- Repo complet : [https://github.com/adeloing/btsave](https://github.com/adeloing/btsave)
-- Dashboard & simulateur (live)
-- Telegram notifier
-- Tests & code source auditable
-
-**Support** : uniquement via Discord/GitHub issues (pas de support privé).
+- Repo : [https://github.com/adeloing/btsave](https://github.com/adeloing/btsave)
+- Dashboard : [turbopaperboat.com/dashboard/](https://turbopaperboat.com/dashboard/)
+- Landing : [turbopaperboat.com](https://turbopaperboat.com)
 
 ---
 
-Vous êtes maintenant pleinement informé. Turbo Paper Boat est un produit puissant pour les Bitcoiners convaincus, mais il reste un produit DeFi expérimental à haut risque. **Utilisez uniquement ce que vous pouvez vous permettre de perdre complètement.**
-
-Bienvenue dans le vault. ⚡
-
-*L'équipe BTSAVE – Février 2026*
-
-*(Ce document est public et peut être mis à jour. Dernière version toujours sur le repo.)*
+*L'équipe BTSAVE – Mars 2026*

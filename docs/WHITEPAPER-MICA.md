@@ -22,13 +22,13 @@ BTSAVE est un vault DeFi sur Ethereum L1 conçu pour l'accumulation agressive et
 - **Minting** : NAV-based (anti-dilution des early users)
 - **Transferable** : 100 % libre (comme les NFTs du projet)
 - **Redeem** : à tout moment contre WBTC (`previewRedeem` visible)
-- **Stratégie** : 79 % collateral aEthWBTC + 18 % buffer USDC + 3 % Deribit, shorts PERP contango + puts OTM dynamiques
+- **Stratégie** : 82% WBTC AAVE V3 + 15% USDC buffer + 3% hedging (2% GMX V2 shorts + 1% Aevo puts) — full on-chain Arbitrum
 - **Cycle** : reset uniquement sur nouvel ATH BTC ratcheté (gain net permanent)
 - **Objectif** : transformer chaque dip BTC en accumulation nette de BTC sans risque de liquidation
 
 Le protocole est **zéro-liquidation par construction** (gestion stricte du Health Factor AAVE + protections automatisées).
 
-Version finale de la stratégie verrouillée le 18 février 2026. Contrats mis à jour le 28 février 2026 avec VaultTPB v2 (NAV ERC-4626).
+Architecture full on-chain Arbitrum finalisée le 2 mars 2026 : TurboPaperBoatVault (ERC-4626) + StrategyOnChain (AAVE V3 + GMX V2) + AevoAdapter (puts) + NFTBonus (ERC-1155).
 
 **Aucune levée de fonds, aucun ICO, aucun token de gouvernance.** TPB est un receipt token utilitaire open-source.
 
@@ -75,22 +75,22 @@ TPB n'est pas un security, un ART (Asset-Referenced Token), un EMT ou un token d
 
 ## 4. Stratégie Technique et Mécanismes (Détails Opérationnels)
 
-**Allocation initiale post-reset** : 79 % aEthWBTC + 18 % buffer aEthUSDC + 3 % marge Deribit.
+**Allocation** : 82% WBTC AAVE V3 + 15% USDC buffer + 3% hedging (2% GMX V2 + 1% Aevo).
 
-**Mécanisme de cycle** (verrouillé 18/02/2026) :
+**Mécanisme de cycle** :
 
 - Cycle commence et se termine uniquement sur nouvel ATH BTC ratcheté.
-- À chaque palier −5 % depuis l'ATH : borrow USDC → swap DeFiLlama → aEthWBTC + short BTC-PERP Deribit.
-- Protection : puts OTM dynamiques financés par le carry contango (déclenchements à +6 %, +14 %, +24 % WBTC extra).
+- À chaque baisse : borrow USDC (AAVE V3) → shorts GMX V2 (split profit-taking + insurance) → puts Aevo (P1 60% ATH + P2 85% ATH)
+- Cash flow via Camelot DEX : swap USDC → WBTC pour accumuler, ou repay dette selon HF
 
 **Reset ATH** :
 
-1. Clôture tous les shorts → profits = bonus pur
-2. Vente du minimum WBTC (P2) pour rembourser 100 % dette USDC
-3. Conservation de tout le reste = gain net permanent
-4. Rebalance 79/18/3 → nouveau cycle
+1. Phase → CLOSING : clôture tous les shorts GMX + puts Aevo
+2. Repay 100% dette AAVE
+3. Phase → IDLE, reset cycle counters
+4. Rebalance 82/15/3 → nouveau cycle
 
-**Gestion du risque** : tout est piloté par le Health Factor AAVE (zones HF 1.50 / 1.40 / 1.30 / 1.15) et non par le prix seul. Exécution manuelle assistée par bots + Telegram alerts (<1h sur L1).
+**Gestion du risque** : piloté par le Health Factor AAVE. HF < 1.85 → 100% repay. HF 1.85-2.0 → 50/50. HF ≥ 2.0 → accumulate WBTC. LTV cap 50%. Trailing stops 60% max profit sur shorts.
 
 **Keeper** : met à jour `safeWBTC` à chaque gain (performance + bonus Deribit).
 
@@ -98,11 +98,12 @@ TPB n'est pas un security, un ART (Asset-Referenced Token), un EMT ou un token d
 
 ## 5. Fonctionnement Technique des Smart Contracts
 
-- **VaultTPB v2 (ERC-4626)** : `depositWBTC`, `redeem`, `previewRedeem`, `notifyCycleEnd`.
-- **TPB.sol** : mint/burn restreints au Vault, transferts libres.
-- **Intégrations** : AAVE V3 Pool, DeFiLlama Aggregator, Deribit API (off-chain keeper).
-- **Tests** : 36/36 passés sur Sepolia, dont test anti-dilution Alice (early) vs Bob (late).
-- **Audit** : audit professionnel en cours – sera publié avant mainnet.
+- **TurboPaperBoatVault.sol (ERC-4626)** : deposit/mint/withdraw/redeem avec entry fees (NFT discount) + exit fees (time-based + drawdown). Pause/unpause via Guardian/Timelock.
+- **StrategyOnChain.sol** : AAVE V3 supply/borrow + GMX V2 shorts (split profit-taking/insurance) + Aevo puts + Camelot swaps. State machine IDLE → HEDGED → CLOSING.
+- **AevoAdapter.sol** : Puts OTM sur Aevo (P1 60% ATH, P2 85% ATH). Roll down, selective close, NAV integration.
+- **NFTBonus.sol (ERC-1155)** : 4 tiers, bonus multiplier réduit entry fees (jusqu'à ~44% du base fee).
+- **Intégrations** : AAVE V3 Pool, GMX V2 Exchange Router, Aevo Router, Camelot V2 Router — tout on-chain Arbitrum.
+- **Audit** : audit interne complété mars 2026. Audit professionnel prévu avant mainnet.
 
 Code source complet et auditable : https://github.com/adeloing/btsave/tree/main/contracts
 
@@ -113,7 +114,7 @@ Code source complet et auditable : https://github.com/adeloing/btsave/tree/main/
 **Risques de perte totale ou partielle** :
 
 - Bug smart contract ou hack de protocole (AAVE, Deribit, oracle)
-- Contrepartie Deribit (exchange risk)
+- Risque de contrepartie GMX V2 / Aevo (protocole DeFi on-chain)
 - Événement extrême Bitcoin (>50 % chute en peu de temps)
 - Risque d'exécution (retard keeper, gas spike, slippage)
 - Risque de liquidité du vault en cas de rush redeem massif
@@ -130,7 +131,7 @@ Code source complet et auditable : https://github.com/adeloing/btsave/tree/main/
 
 - Volatilité du prix TPB sur marchés secondaires
 - Perte d'accès wallet
-- Rug-pull inexistant (open-source, pas de clé admin centralisée après déploiement)
+- Rug-pull mitigé (open-source, admin = timelock controller, guardian = pause only)
 
 ---
 
@@ -201,14 +202,18 @@ Code source complet et auditable : https://github.com/adeloing/btsave/tree/main/
 | **WBTC** | Wrapped Bitcoin — BTC tokenisé sur Ethereum |
 | **Contango** | Situation où le prix futur > prix spot (carry positif sur les shorts) |
 | **Put OTM** | Option de vente hors de la monnaie (protection contre la baisse) |
-| **LSM** | LimitedSignerModule — module Gnosis Safe de sécurité on-chain |
 | **Keeper** | Bot automatisé qui exécute les opérations du vault |
+| **Timelock** | OpenZeppelin TimelockController — admin operations delayed |
+| **GMX V2** | Decentralized perpetuals exchange on Arbitrum |
+| **Aevo** | On-chain options protocol (puts) |
+| **Camelot** | Native Arbitrum DEX for swaps |
 
 ### C. Historique des versions
 
 | Version | Date | Changements |
 |---------|------|-------------|
 | 1.0 | 28/02/2026 | Version initiale du whitepaper MiCA |
+| 2.0 | 02/03/2026 | Migration full on-chain Arbitrum (GMX V2 + Aevo remplace Deribit, Timelock remplace Safe/LSM) |
 
 ---
 

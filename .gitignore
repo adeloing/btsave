@@ -1,5 +1,7 @@
-
 .env
 contracts/.env
 node_modules/
 */node_modules/
+contracts/out/
+contracts/cache/
+package-lock.json
