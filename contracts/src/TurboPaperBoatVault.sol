@@ -28,14 +28,25 @@ contract TurboPaperBoatVault is ERC4626, ReentrancyGuard, AccessControl {
     NFTBonus public nftBonus;
     address public treasury;
 
-    // ======================== FEE CONFIG ========================
+    // ======================== ENTRY FEE CONFIG ========================
     uint256 public constant BASE_ENTRY_FEE_BPS = 200;   // 2%
     uint256 public constant ATH_ENTRY_FEE_BPS  = 500;   // 5% when price > 95% ATH
     uint256 public constant ATH_THRESHOLD_BPS  = 9500;   // 95%
 
+    // ======================== EXIT FEE CONFIG ========================
+    uint256 public constant EXIT_FEE_7D_BPS   = 200;    // 2.0% if < 7 days
+    uint256 public constant EXIT_FEE_30D_BPS  = 100;    // 1.0% if < 30 days
+    uint256 public constant EXIT_FEE_90D_BPS  =  50;    // 0.5% if < 90 days
+    uint256 public constant CYCLE_BONUS_BPS   = 100;    // +1.0% in drawdown (> -10% ATH)
+    uint256 public constant DRAWDOWN_THRESHOLD_BPS = 9000; // 90% ATH = -10% drawdown
+
+    // ======================== EXIT FEE STATE ========================
+    mapping(address => uint256) public userDepositTime;
+
     // ======================== EVENTS ========================
     event Paused(address indexed by);
     event Unpaused(address indexed by);
+    event ExitFeeCharged(address indexed user, uint256 assets, uint256 feeAmount, uint256 holdingDays, bool inDrawdown);
     event StrategyUpdated(address indexed oldStrategy, address indexed newStrategy);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event NFTBonusUpdated(address indexed oldNFTBonus, address indexed newNFTBonus);
@@ -67,7 +78,30 @@ contract TurboPaperBoatVault is ERC4626, ReentrancyGuard, AccessControl {
         _grantRole(GUARDIAN_ROLE, guardian_);         // guardian = founder (instant pause)
     }
 
-    // ======================== FEE LOGIC ========================
+    // ======================== EXIT FEE LOGIC ========================
+
+    function getExitFeeBps(address user) public view returns (uint256) {
+        uint256 depositTime = userDepositTime[user];
+        if (depositTime == 0) return 0;
+
+        uint256 holdingDays = (block.timestamp - depositTime) / 1 days;
+
+        uint256 feeBps;
+        if (holdingDays < 7) feeBps = EXIT_FEE_7D_BPS;
+        else if (holdingDays < 30) feeBps = EXIT_FEE_30D_BPS;
+        else if (holdingDays < 90) feeBps = EXIT_FEE_90D_BPS;
+        else return 0; // >= 90 days: no fee at all
+
+        uint256 ath = strategy.currentATH();
+        uint256 price = strategy.currentPrice();
+        if (ath > 0 && price < (ath * DRAWDOWN_THRESHOLD_BPS) / 10_000) {
+            feeBps += CYCLE_BONUS_BPS;
+        }
+
+        return feeBps;
+    }
+
+    // ======================== ENTRY FEE LOGIC ========================
 
     /// @dev Base fee: 5% near ATH, 2% otherwise
     function _baseFeeBps() internal view returns (uint256) {
@@ -132,11 +166,14 @@ contract TurboPaperBoatVault is ERC4626, ReentrancyGuard, AccessControl {
         IERC20(asset()).safeIncreaseAllowance(address(strategy), net);
         strategy.deposit(net);
 
+        // Track deposit time (reset on each deposit — simple, no per-tranche tracking)
+        userDepositTime[receiver] = block.timestamp;
+
         _mint(receiver, shares);
         emit Deposit(caller, receiver, assets, shares);
     }
 
-    /// @dev Override internal withdraw: pull from strategy
+    /// @dev Override internal withdraw: pull from strategy, apply exit fee
     function _withdraw(
         address caller,
         address receiver,
@@ -149,7 +186,25 @@ contract TurboPaperBoatVault is ERC4626, ReentrancyGuard, AccessControl {
         }
         _burn(owner, shares);
 
-        uint256 received = strategy.withdraw(assets, receiver);
+        // Pull full amount from strategy to vault
+        uint256 received = strategy.withdraw(assets, address(this));
+
+        // Apply exit fee
+        uint256 feeBps = getExitFeeBps(owner);
+        uint256 feeAmount;
+        if (feeBps > 0) {
+            feeAmount = (received * feeBps) / 10_000;
+            received -= feeAmount;
+            IERC20(asset()).safeTransfer(treasury, feeAmount);
+
+            uint256 ath = strategy.currentATH();
+            uint256 price = strategy.currentPrice();
+            bool inDrawdown = ath > 0 && price < (ath * DRAWDOWN_THRESHOLD_BPS) / 10_000;
+            uint256 holdingDays = (block.timestamp - userDepositTime[owner]) / 1 days;
+            emit ExitFeeCharged(owner, received, feeAmount, holdingDays, inDrawdown);
+        }
+
+        IERC20(asset()).safeTransfer(receiver, received);
         emit Withdraw(caller, receiver, owner, received, shares);
     }
 
