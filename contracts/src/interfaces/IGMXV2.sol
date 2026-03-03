@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 /// @notice GMX V2 Exchange Router (Arbitrum) — order creation
 interface IGMXExchangeRouter {
