@@ -91,9 +91,21 @@ function requireAuth(req, res, next) {
 }
 app.use(requireAuth);
 
+// === Fork Deployment Detection ===
+let forkDeployment = null;
+const forkPath = path.join(__dirname, 'fork-deployment.json');
+try {
+  if (fs.existsSync(forkPath)) {
+    forkDeployment = JSON.parse(fs.readFileSync(forkPath, 'utf8'));
+    console.log('Fork deployment loaded:', Object.keys(forkDeployment).join(', '));
+  }
+} catch (e) { console.warn('Could not load fork-deployment.json:', e.message); }
+
+const IS_FORK = !!forkDeployment;
+
 // === Arbitrum On-Chain Config ===
-const ARB_RPC = 'https://arb1.arbitrum.io/rpc';
-const AAVE_WALLET = '0x5F8E0020C3164fB7EB170D7345672F6948Ca0FF4';
+const ARB_RPC = IS_FORK ? forkDeployment.rpc : 'https://arb1.arbitrum.io/rpc';
+const AAVE_WALLET = IS_FORK ? forkDeployment.strategy : '0x5F8E0020C3164fB7EB170D7345672F6948Ca0FF4';
 const AAVE_POOL = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
 const WBTC_ARB = '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f';
 const USDC_ARB = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
@@ -102,21 +114,19 @@ const USDC_ARB = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
 const AWBTC = '0x078f358208685046a11C85e8ad32895DED33A249'; // aArbWBTC
 const AUSDC = '0x724dc807b04555b71ed48a6896b6F41593b8C637'; // aArbUSDC  
 const DEBT_USDC = '0xFCCf3cAbbe80101232d343252614b6A3eE81C989'; // variableDebtArbUSDC
-// Note: These are the standard Arbitrum AAVE V3 aToken addresses.
-// If wallet has no positions on Arbitrum AAVE, values will be 0.
 
 // GMX V2 Arbitrum
-const GMX_READER = '0x0000000000000000000000000000000000000000'; // TODO: GMX V2 Reader contract
-const GMX_DATASTORE = '0x0000000000000000000000000000000000000000'; // TODO: GMX V2 DataStore
+const GMX_READER = '0xf60becbba223EEA9495Da3f606753867eC10d139';
+const GMX_DATASTORE = '0xFD70de6b91282D8017aA4E741e9Ae325CAb992d8';
 
 // Aevo Adapter (puts)
-const AEVO_ADAPTER = '0x0000000000000000000000000000000000000000'; // TODO: deploy
+const AEVO_ADAPTER = IS_FORK ? forkDeployment.aevoAdapter : '0x0000000000000000000000000000000000000000';
 
-// Strategy / Vault / DAO (TODO: deploy these)
-const STRATEGY_CONTRACT = '0x0000000000000000000000000000000000000000'; // TODO
-const VAULT_CONTRACT = '0x0000000000000000000000000000000000000000'; // TODO
-const TIMELOCK_CONTROLLER = '0x0000000000000000000000000000000000000000'; // TODO
-const NFT_BONUS_CONTRACT = '0x0000000000000000000000000000000000000000'; // TODO
+// Strategy / Vault / DAO
+const STRATEGY_CONTRACT = IS_FORK ? forkDeployment.strategy : '0x0000000000000000000000000000000000000000';
+const VAULT_CONTRACT = IS_FORK ? forkDeployment.vault : '0x0000000000000000000000000000000000000000';
+const TIMELOCK_CONTROLLER = '0x0000000000000000000000000000000000000000';
+const NFT_BONUS_CONTRACT = IS_FORK ? forkDeployment.nftBonus : '0x0000000000000000000000000000000000000000';
 
 // === Cache ===
 let cache = { data: null, ts: 0 };
@@ -128,7 +138,7 @@ function rpcCall(rpcUrl, body) {
     const url = new URL(rpcUrl);
     const mod = url.protocol === 'https:' ? https : http;
     const req = mod.request({
-      hostname: url.hostname, path: url.pathname, method: 'POST',
+      hostname: url.hostname, port: url.port, path: url.pathname, method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     }, res => {
       let d = ''; res.on('data', c => d += c);
@@ -246,6 +256,49 @@ function getStrategyPhase(gmxPositions, aave) {
   return 'IDLE';
 }
 
+// === Strategy/Vault On-Chain Reads (fork mode) ===
+async function fetchStrategyData() {
+  if (!IS_FORK || STRATEGY_CONTRACT === '0x0000000000000000000000000000000000000000') {
+    return null;
+  }
+  try {
+    const results = await ethBatch([
+      { to: STRATEGY_CONTRACT, data: '0x01e1d114' },  // totalAssets()
+      { to: STRATEGY_CONTRACT, data: '0x9d1b464a' },  // currentPrice()
+      { to: STRATEGY_CONTRACT, data: '0xd9f355c1' },  // currentATH()
+      { to: STRATEGY_CONTRACT, data: '0xb1c9fe6e' },  // phase()
+      { to: STRATEGY_CONTRACT, data: '0x0fe01059' },  // activeShortCount()
+      { to: VAULT_CONTRACT, data: '0x01e1d114' },     // vault.totalAssets()
+      { to: VAULT_CONTRACT, data: '0x18160ddd' },     // vault.totalSupply()
+    ]);
+    if (!Array.isArray(results)) return null;
+    results.sort((a, b) => a.id - b.id);
+    const totalAssets = Number(toBig(results[0].result));
+    const currentPrice = Number(toBig(results[1].result));
+    const currentATH = Number(toBig(results[2].result));
+    const phase = Number(toBig(results[3].result));
+    const activeShorts = Number(toBig(results[4].result));
+    const vaultTotalAssets = Number(toBig(results[5].result));
+    const vaultTotalSupply = Number(toBig(results[6].result));
+    const phaseNames = ['IDLE', 'HEDGED', 'CLOSING'];
+    const tpbPrice = vaultTotalSupply > 0 ? vaultTotalAssets / vaultTotalSupply : 1;
+    return {
+      totalAssetsBTC: totalAssets / 1e8,
+      currentPrice: currentPrice / 1e8,
+      currentATH: currentATH / 1e8,
+      phaseName: phaseNames[phase] || 'UNKNOWN',
+      phaseNum: phase,
+      activeShorts,
+      vaultTotalAssetsBTC: vaultTotalAssets / 1e8,
+      vaultTotalSupply: vaultTotalSupply / 1e8,
+      tpbPrice,
+    };
+  } catch (e) {
+    console.error('Strategy fetch error:', e.message);
+    return null;
+  }
+}
+
 // === DAO Info (placeholder) ===
 async function fetchDAOInfo() {
   // TODO: Read from deployed contracts
@@ -313,13 +366,14 @@ process.on('unhandledRejection', (err) => { console.error('UNHANDLED:', err.mess
 app.use(express.static('public'));
 
 async function fetchAllData() {
-  const [btcPrice, aave, gmx, aevo, dao, arbInfo] = await Promise.all([
+  const [btcPrice, aave, gmx, aevo, dao, arbInfo, strategyData] = await Promise.all([
     fetchBTCPrice(),
     fetchAAVE(),
     fetchGMXPositions(),
     fetchAevoPositions(),
     fetchDAOInfo(),
     fetchArbInfo(),
+    fetchStrategyData(),
   ]);
 
   const price = btcPrice;
@@ -333,8 +387,7 @@ async function fetchAllData() {
       totalAssetsUSD: +aave.totalCollateralUSD.toFixed(2),
       totalDebtUSD: +aave.totalDebtUSD.toFixed(2),
       netUSD: +netUSD.toFixed(2),
-      // TODO: Add vault totalSupply to compute TPB price
-      tpbPrice: 0, // TODO: vault.totalAssets() / vault.totalSupply()
+      tpbPrice: strategyData ? strategyData.tpbPrice : 0,
     };
   }
 
@@ -347,7 +400,7 @@ async function fetchAllData() {
   else currentZone = 'danger';
 
   // Operational metrics
-  const ath = 0; // TODO: read from strategy.currentATH()
+  const ath = strategyData ? strategyData.currentATH : 0;
   const drawdownPct = ath > 0 && price > 0 ? ((ath - price) / ath * 100) : 0;
   const inDrawdown = ath > 0 && price < ath * 0.9;
 
@@ -380,6 +433,8 @@ async function fetchAllData() {
     dao,
     nav,
     arb: arbInfo,
+    strategy: strategyData,
+    isFork: IS_FORK,
   };
 }
 
